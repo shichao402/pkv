@@ -44,7 +44,6 @@ jobs:
           
           OUTPUT_NAME="pkv_${{ matrix.goos }}_${{ matrix.goarch }}"
           go build -ldflags "${LDFLAGS}" -o "${OUTPUT_NAME}" .
-          
           sha256sum "${OUTPUT_NAME}" > "${OUTPUT_NAME}.sha256"
       
       - uses: actions/upload-artifact@v4
@@ -52,7 +51,6 @@ jobs:
           name: pkv-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             pkv_*
-            *.sha256
           retention-days: 1
 
   release:
@@ -65,11 +63,23 @@ jobs:
           pattern: pkv-*
           merge-multiple: true
       
+      - name: List artifacts
+        run: ls -lh pkv_*
+      
+      - name: Generate checksums
+        run: sha256sum pkv_*[!.sha256] > checksums.sha256
+
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            pkv_*
-            *.sha256
-          draft: false
-          prerelease: false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --generate-notes \
+            pkv_darwin_amd64 \
+            pkv_darwin_arm64 \
+            pkv_linux_amd64 \
+            pkv_linux_arm64 \
+            checksums.sha256
