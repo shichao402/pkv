@@ -43,7 +43,7 @@ get_latest_version() {
         error "curl or wget is required"
     fi
 
-    VERSION=$(echo "$RELEASE_JSON" | grep '"tag_name"' | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/')
+    VERSION=$(echo "$RELEASE_JSON" | tr ',' '\n' | grep '"tag_name"' | cut -d'"' -f4)
     if [ -z "$VERSION" ]; then
         error "Failed to determine latest version"
     fi
