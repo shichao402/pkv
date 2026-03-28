@@ -8,7 +8,7 @@ LDFLAGS = -s -w \
 	-X '$(MODULE)/internal/version.Commit=$(COMMIT)' \
 	-X '$(MODULE)/internal/version.Date=$(DATE)'
 
-PLATFORMS = darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
+PLATFORMS = darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
 DIST_DIR  = dist
 
 .PHONY: build clean release install
@@ -28,7 +28,9 @@ release: clean
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; \
 		arch=$${platform#*/}; \
-		output="$(DIST_DIR)/pkv_$${os}_$${arch}"; \
+		ext=""; \
+		if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
+		output="$(DIST_DIR)/pkv_$${os}_$${arch}$${ext}"; \
 		echo "Building $$output ..."; \
 		GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o $$output . || exit 1; \
 	done

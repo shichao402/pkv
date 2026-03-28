@@ -110,9 +110,13 @@ func fetchLatestRelease() (*ghRelease, error) {
 }
 
 // buildAssetName returns the expected asset filename for the current platform.
-// Convention: pkv_{os}_{arch}  (e.g. pkv_darwin_arm64, pkv_linux_amd64)
+// Convention: pkv_{os}_{arch} (+ .exe on Windows)
 func buildAssetName() string {
-	return fmt.Sprintf("pkv_%s_%s", runtime.GOOS, runtime.GOARCH)
+	name := fmt.Sprintf("pkv_%s_%s", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
 }
 
 func downloadAsset(url string) (string, error) {

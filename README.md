@@ -9,24 +9,29 @@
 - 📝 **同步敏感配置文件** - 将 Bitwarden Note 快速导出到当前目录
 - 🧹 **精确清理** - 支持 `clean` 命令，安全移除部署的密钥和配置，不损害手动添加的内容
 - 🔄 **自动更新** - `pkv update` 检查并下载最新版本
-- 🌍 **跨平台** - 支持 Linux、macOS，amd64、arm64 架构
+- 🌍 **跨平台** - 支持 Linux、macOS、Windows，amd64、arm64 架构
 
 ## 快速开始
 
 ### 1. 安装
 
+**macOS / Linux：**
 ```bash
-# 从 GitHub Releases 自动下载安装到 ~/.local/bin
 curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/main/install.sh | bash
+```
 
-# 验证安装
+**Windows (PowerShell)：**
+```powershell
+irm https://raw.githubusercontent.com/shichao402/pkv/main/install.ps1 | iex
+```
+
+验证安装：
+```bash
 pkv --version
 ```
 
-如果 `~/.local/bin` 不在 PATH 中，请添加到 shell 配置文件（`~/.bashrc`、`~/.zshrc` 等）：
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+> macOS/Linux 安装到 `~/.local/bin`，Windows 安装到 `%LOCALAPPDATA%\pkv`。
+> 脚本会自动检测 PATH，提示添加（如未包含）。
 
 ### 2. 准备 Bitwarden 数据
 
@@ -182,10 +187,19 @@ pkv --version                   # 显示版本、提交哈希、编译时间
   brew install bitwarden-cli
   
   # Linux
+  sudo snap install bw
+  # 或
   npm install -g @bitwarden/cli
-  
-  # 或从官网下载: https://bitwarden.com/download/#cli
   ```
+  ```powershell
+  # Windows
+  winget install Bitwarden.CLI
+  # 或
+  choco install bitwarden-cli
+  # 或
+  scoop install bitwarden-cli
+  ```
+  > 如果未安装 `bw`，pkv 运行时会自动检测并给出当前平台的安装指引。
 - Go 1.21+ （仅用于从源码构建）
 
 ## 安全考虑
@@ -218,7 +232,12 @@ pkv update
 
 或重新运行安装脚本：
 ```bash
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/main/install.sh | bash
+```
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/shichao402/pkv/main/install.ps1 | iex
 ```
 
 ## 故障排除

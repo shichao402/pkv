@@ -18,6 +18,10 @@ func NewClient() *Client {
 
 // EnsureUnlocked checks bw status, logs in if needed, unlocks vault, returns session key.
 func (c *Client) EnsureUnlocked() (string, error) {
+	if err := CheckBWInstalled(); err != nil {
+		return "", err
+	}
+
 	status, err := c.getStatus()
 	if err != nil {
 		return "", fmt.Errorf("failed to get bw status: %w", err)

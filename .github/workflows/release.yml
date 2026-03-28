@@ -17,12 +17,22 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
+            suffix: ""
           - goos: linux
             goarch: arm64
+            suffix: ""
           - goos: darwin
             goarch: amd64
+            suffix: ""
           - goos: darwin
             goarch: arm64
+            suffix: ""
+          - goos: windows
+            goarch: amd64
+            suffix: ".exe"
+          - goos: windows
+            goarch: arm64
+            suffix: ".exe"
     steps:
       - uses: actions/checkout@v4
       
@@ -42,15 +52,13 @@ jobs:
           MODULE="github.com/shichao402/pkv"
           LDFLAGS="-s -w -X '${MODULE}/internal/version.Version=${VERSION}' -X '${MODULE}/internal/version.Commit=${COMMIT}' -X '${MODULE}/internal/version.Date=${DATE}'"
           
-          OUTPUT_NAME="pkv_${{ matrix.goos }}_${{ matrix.goarch }}"
+          OUTPUT_NAME="pkv_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.suffix }}"
           go build -ldflags "${LDFLAGS}" -o "${OUTPUT_NAME}" .
-          sha256sum "${OUTPUT_NAME}" > "${OUTPUT_NAME}.sha256"
       
       - uses: actions/upload-artifact@v4
         with:
           name: pkv-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            pkv_*
+          path: pkv_*
           retention-days: 1
 
   release:
@@ -65,9 +73,9 @@ jobs:
       
       - name: List artifacts
         run: ls -lh pkv_*
-      
+
       - name: Generate checksums
-        run: sha256sum pkv_*[!.sha256] > checksums.sha256
+        run: sha256sum pkv_* > checksums.sha256
 
       - name: Create Release
         env:
@@ -78,8 +86,5 @@ jobs:
           gh release create "${TAG}" \
             --title "${TAG}" \
             --generate-notes \
-            pkv_darwin_amd64 \
-            pkv_darwin_arm64 \
-            pkv_linux_amd64 \
-            pkv_linux_arm64 \
+            pkv_* \
             checksums.sha256
