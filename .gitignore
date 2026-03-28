@@ -1,0 +1,23 @@
+pkv
+dist/
+*.exe
+.DS_Store
+
+# Secrets
+.env*
+!.env.example
+.env.*.local
+secrets.*
+*.pem
+*.key
+*.pass
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary
+.pnpm-debug.log
