@@ -9,10 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  bump-and-tag:
-    name: Bump Version & Tag
+  bump:
+    name: Bump Version
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,3 +39,86 @@ jobs:
           git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
           git tag "v${{ steps.bump.outputs.version }}"
           git push origin main --tags
+
+  build:
+    name: Build
+    needs: bump
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: ""
+          - goos: linux
+            goarch: arm64
+            suffix: ""
+          - goos: darwin
+            goarch: amd64
+            suffix: ""
+          - goos: darwin
+            goarch: arm64
+            suffix: ""
+          - goos: windows
+            goarch: amd64
+            suffix: ".exe"
+          - goos: windows
+            goarch: arm64
+            suffix: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "v${{ needs.bump.outputs.version }}"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="v${{ needs.bump.outputs.version }}"
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          MODULE="github.com/shichao402/pkv"
+          LDFLAGS="-s -w -X '${MODULE}/internal/version.Version=${VERSION}' -X '${MODULE}/internal/version.Commit=${COMMIT}' -X '${MODULE}/internal/version.Date=${DATE}'"
+
+          OUTPUT_NAME="pkv_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.suffix }}"
+          go build -ldflags "${LDFLAGS}" -o "${OUTPUT_NAME}" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkv-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: pkv_*
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: [bump, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkv-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh pkv_*
+
+      - name: Generate checksums
+        run: sha256sum pkv_* > checksums.sha256
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          TAG="v${{ needs.bump.outputs.version }}"
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --generate-notes \
+            pkv_* \
+            checksums.sha256
