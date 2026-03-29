@@ -6,6 +6,7 @@
 
 - 🔐 **从 Bitwarden 自动部署 SSH 密钥** - 无需手动复制粘贴
 - ⚡ **自动配置 SSH** - 生成完整的 `~/.ssh/config`，支持自定义端口、多主机
+- 🌐 **部署环境变量** - 从 Bitwarden Note 同步 KEY=VALUE 到系统环境变量
 - 📝 **同步敏感配置文件** - 将 Bitwarden Note 快速导出到当前目录
 - 🧹 **精确清理** - 支持 `clean` 命令，安全移除部署的密钥和配置，不损害手动添加的内容
 - 🔄 **自动更新** - `pkv update` 检查并下载最新版本
@@ -47,10 +48,26 @@ pkv --version
   *.example.com
   ```
 
-#### Config Note（可选）
+#### Env Note（环境变量）
 - **类型**：Secure Note
-- **名称**：任意（如 `lyraXX`）
-- **内容**：任意文本（如 JSON 配置、环境变量等）
+- **名称**：任意（如 `database-creds`）
+- **自定义字段**：添加一个字段，**Name** 为 `pkv_type`，**Value** 为 `env`
+- **内容**：KEY=VALUE 格式，一行一个
+  ```
+  DB_HOST=localhost
+  DB_USER=admin
+  export DB_PASS="s3cret"
+  # 注释会被忽略
+  ```
+
+> **重要**：`pkv env` 命令**只会处理**标记了 `pkv_type=env` 的 Secure Note，未标记的会被跳过并提示警告。这样可以避免普通文本 Note 被误当作环境变量部署。
+
+#### Config Note（配置文件）
+- **类型**：Secure Note
+- **名称**：任意（如 `config.json`，会作为导出的文件名）
+- **内容**：任意文本
+
+> `pkv note` 命令会自动排除标记了 `pkv_type=env` 的 Note，其余 Note 正常同步为文件。
 
 ### 3. 部署
 
@@ -73,17 +90,30 @@ ssh -p 2222 10.0.0.1
 ssh user@example.com
 ```
 
-### 5. 同步配置文件
+### 5. 部署环境变量
+
+```bash
+# 从 credentials 文件夹部署环境变量
+pkv env credentials
+
+# 清理已部署的环境变量
+pkv env credentials clean
+```
+
+> Linux/macOS 下变量写入 `~/.pkv/env.sh` 并自动 source；Windows 下设为用户级环境变量。
+> 部署后需要打开新终端才能生效。
+
+### 6. 同步配置文件
 
 ```bash
 cd ~/my-project
 
-# 从 LyraX 文件夹同步所有 Note 为文件到当前目录
+# 从 LyraX 文件夹同步所有 Note 为文件到当前目录（自动排除 env 类型）
 pkv note LyraX
 # 结果：lyraXX 文件被创建到当前目录
 ```
 
-### 6. 清理
+### 7. 清理
 
 ```bash
 # 移除所有部署的 SSH 密钥和配置
@@ -94,6 +124,21 @@ pkv note LyraX clean
 ```
 
 ## 命令参考
+
+### 部署环境变量
+
+```bash
+pkv env <folder>               # 从指定文件夹部署环境变量（仅处理 pkv_type=env 的 Note）
+pkv env <folder> clean         # 清理已部署的环境变量
+```
+
+**要求**：Secure Note 必须设置自定义字段 `pkv_type=env`，否则会被跳过。
+
+**例子**：
+```bash
+pkv env credentials            # 部署
+pkv env credentials clean      # 清理
+```
 
 ### 部署 SSH 密钥
 
@@ -115,7 +160,7 @@ pkv ssh work-keys              # 使用其他文件夹
 ### 同步配置文件
 
 ```bash
-pkv note <folder>              # 从指定文件夹导出所有 Note 到当前目录
+pkv note <folder>              # 从指定文件夹导出 Note 到当前目录（排除 pkv_type=env）
 pkv note <folder> clean        # 移除已同步的 Note 文件
 ```
 
