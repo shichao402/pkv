@@ -12,6 +12,9 @@ secrets.*
 *.key
 *.pass
 
+# Dec
+.dec/
+
 # IDE
 .vscode/
 .idea/
