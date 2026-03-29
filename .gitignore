@@ -18,9 +18,11 @@ secrets.*
 # IDE
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
 
 # Temporary
 .pnpm-debug.log
+coverage.out
