@@ -25,9 +25,17 @@ type NoteEntry struct {
 	SyncedAt string `json:"synced_at"`
 }
 
+type EnvEntry struct {
+	ItemID string   `json:"item_id"`
+	Name   string   `json:"name"`
+	Keys   []string `json:"keys"`
+	SetAt  string   `json:"set_at"`
+}
+
 type State struct {
 	SSHKeys []SSHKeyEntry `json:"ssh_keys"`
 	Notes   []NoteEntry   `json:"notes"`
+	Envs    []EnvEntry    `json:"envs"`
 	path    string
 }
 
@@ -87,6 +95,18 @@ func (s *State) AddSSHKey(entry SSHKeyEntry) {
 		}
 	}
 	s.SSHKeys = append(s.SSHKeys, entry)
+}
+
+// AddEnv records deployed environment variables.
+func (s *State) AddEnv(entry EnvEntry) {
+	entry.SetAt = time.Now().Format(time.RFC3339)
+	for i, e := range s.Envs {
+		if e.ItemID == entry.ItemID {
+			s.Envs[i] = entry
+			return
+		}
+	}
+	s.Envs = append(s.Envs, entry)
 }
 
 // AddNote records a synced note.
