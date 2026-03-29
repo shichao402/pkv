@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.2.3] - 2026-03-29
+
+### Changed
+- Replaced GitHub API calls with HTTP redirect-based version detection in `install.sh`, `install.ps1`, and `pkv update`
+- Eliminates API rate limiting issues for unauthenticated users
+
 ## [v0.2.2] - 2026-03-29
 
 ### Added

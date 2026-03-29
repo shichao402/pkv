@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"runtime"
 	"strings"
 
@@ -14,19 +14,9 @@ import (
 )
 
 const (
-	githubRepo   = "shichao402/pkv"
-	githubAPIURL = "https://api.github.com/repos/" + githubRepo + "/releases/latest"
+	githubRepo       = "shichao402/pkv"
+	githubReleasesURL = "https://github.com/" + githubRepo + "/releases/latest"
 )
-
-type ghRelease struct {
-	TagName string    `json:"tag_name"`
-	Assets  []ghAsset `json:"assets"`
-}
-
-type ghAsset struct {
-	Name               string `json:"name"`
-	BrowserDownloadURL string `json:"browser_download_url"`
-}
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
@@ -42,12 +32,12 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	fmt.Printf("Current version: %s\n", version.Version)
 	fmt.Println("Checking for updates...")
 
-	release, err := fetchLatestRelease()
+	latestTag, err := fetchLatestTag()
 	if err != nil {
 		return fmt.Errorf("check update failed: %w", err)
 	}
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	latestVersion := strings.TrimPrefix(latestTag, "v")
 	currentVersion := strings.TrimPrefix(version.Version, "v")
 
 	if latestVersion == currentVersion && currentVersion != "dev" {
@@ -55,19 +45,10 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	fmt.Printf("New version available: %s\n", release.TagName)
+	fmt.Printf("New version available: %s\n", latestTag)
 
 	assetName := buildAssetName()
-	var downloadURL string
-	for _, asset := range release.Assets {
-		if asset.Name == assetName {
-			downloadURL = asset.BrowserDownloadURL
-			break
-		}
-	}
-	if downloadURL == "" {
-		return fmt.Errorf("no release asset found for %s/%s (looking for %s)", runtime.GOOS, runtime.GOARCH, assetName)
-	}
+	downloadURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", githubRepo, latestTag, assetName)
 
 	fmt.Printf("Downloading %s...\n", assetName)
 	tmpFile, err := downloadAsset(downloadURL)
@@ -86,27 +67,39 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("replace binary: %w", err)
 	}
 
-	fmt.Printf("Updated to %s successfully.\n", release.TagName)
+	fmt.Printf("Updated to %s successfully.\n", latestTag)
 	return nil
 }
 
-func fetchLatestRelease() (*ghRelease, error) {
-	resp, err := http.Get(githubAPIURL)
+// fetchLatestTag gets the latest release tag via HTTP redirect (no API needed).
+func fetchLatestTag() (string, error) {
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := client.Get(githubReleasesURL)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode != http.StatusFound {
+		return "", fmt.Errorf("expected redirect (302), got %d", resp.StatusCode)
 	}
 
-	var release ghRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("no Location header in redirect response")
 	}
-	return &release, nil
+
+	tag := path.Base(location)
+	if tag == "" || tag == "." || tag == "/" {
+		return "", fmt.Errorf("failed to extract tag from redirect URL: %s", location)
+	}
+
+	return tag, nil
 }
 
 // buildAssetName returns the expected asset filename for the current platform.

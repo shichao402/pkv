@@ -33,17 +33,17 @@ detect_platform() {
 
 get_latest_version() {
     info "Fetching latest release..."
-    LATEST_URL="https://api.github.com/repos/${REPO}/releases/latest"
+    RELEASES_URL="https://github.com/${REPO}/releases/latest"
 
     if command -v curl &>/dev/null; then
-        RELEASE_JSON=$(curl -fsSL "$LATEST_URL")
+        REDIRECT_URL=$(curl -sI -o /dev/null -w '%{redirect_url}' "$RELEASES_URL")
     elif command -v wget &>/dev/null; then
-        RELEASE_JSON=$(wget -qO- "$LATEST_URL")
+        REDIRECT_URL=$(wget --spider -S "$RELEASES_URL" 2>&1 | grep -i 'Location:' | tail -1 | awk '{print $2}' | tr -d '\r')
     else
         error "curl or wget is required"
     fi
 
-    VERSION=$(echo "$RELEASE_JSON" | tr ',' '\n' | grep '"tag_name"' | cut -d'"' -f4)
+    VERSION="${REDIRECT_URL##*/}"
     if [ -z "$VERSION" ]; then
         error "Failed to determine latest version"
     fi

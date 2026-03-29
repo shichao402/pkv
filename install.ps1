@@ -22,13 +22,30 @@ function Get-Arch {
 
 function Get-LatestVersion {
     Write-Info "Fetching latest release..."
-    $url = "https://api.github.com/repos/$Repo/releases/latest"
+    $url = "https://github.com/$Repo/releases/latest"
     try {
-        $release = Invoke-RestMethod -Uri $url -UseBasicParsing
-        return $release.tag_name
+        $response = Invoke-WebRequest -Uri $url -MaximumRedirection 0 -UseBasicParsing -ErrorAction SilentlyContinue 2>$null
     } catch {
-        Write-Err "Failed to fetch latest version: $_"
+        $response = $_.Exception.Response
     }
+    $location = $response.Headers.Location
+    if (-not $location) {
+        # Fallback: follow redirect and extract from final URL
+        try {
+            $response = Invoke-WebRequest -Uri $url -UseBasicParsing
+            $location = $response.BaseResponse.ResponseUri.ToString()
+            if (-not $location) {
+                $location = $response.BaseResponse.RequestMessage.RequestUri.ToString()
+            }
+        } catch {
+            Write-Err "Failed to fetch latest version: $_"
+        }
+    }
+    $version = ($location -split '/')[-1]
+    if (-not $version) {
+        Write-Err "Failed to determine latest version from redirect"
+    }
+    return $version
 }
 
 function Download-Binary {
