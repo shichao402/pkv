@@ -2,6 +2,7 @@
 # Usage: irm https://raw.githubusercontent.com/shichao402/pkv/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repo = "shichao402/pkv"
 $InstallDir = "$env:LOCALAPPDATA\pkv"
