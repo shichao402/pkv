@@ -16,7 +16,10 @@ var envCmd = &cobra.Command{
 	Short: "Deploy environment variables from a Bitwarden folder",
 	Long: `Deploy environment variables from Secure Notes in the specified Bitwarden folder.
 
-Each Secure Note should contain KEY=VALUE pairs (one per line).
+Each Secure Note must have a custom field "pkv_type" set to "env" to be recognized.
+Notes without this field will be skipped with a warning.
+
+The note content should contain KEY=VALUE pairs (one per line).
 Supports: KEY=VALUE, export KEY=VALUE, # comments, quoted values.
 
 On Windows, variables are set as persistent User environment variables.
@@ -72,9 +75,15 @@ func runEnvDeploy(folder string) error {
 		return fmt.Errorf("list items failed: %w", err)
 	}
 
-	notes := bw.FilterSecureNotes(items)
+	notes, skipped := bw.FilterEnvNotes(items)
+	if len(skipped) > 0 {
+		fmt.Printf("Skipped %d note(s) without pkv_type=env:\n", len(skipped))
+		for _, s := range skipped {
+			fmt.Printf("  - '%s' (add custom field pkv_type=env in Bitwarden to include)\n", s.Name)
+		}
+	}
 	if len(notes) == 0 {
-		fmt.Println("No Secure Notes found in folder.")
+		fmt.Println("No env notes found. Make sure Secure Notes have custom field pkv_type=env.")
 		return nil
 	}
 

@@ -108,6 +108,34 @@ func FilterSecureNotes(items []types.Item) []types.Item {
 	return result
 }
 
+// FilterEnvNotes returns Secure Notes that are explicitly marked with pkv_type=env.
+// Items without the pkv_type field or with a different value are excluded.
+func FilterEnvNotes(items []types.Item) (matched []types.Item, skipped []types.Item) {
+	for _, item := range items {
+		if item.Type != types.ItemTypeSecureNote {
+			continue
+		}
+		if item.IsEnv() {
+			matched = append(matched, item)
+		} else {
+			skipped = append(skipped, item)
+		}
+	}
+	return
+}
+
+// FilterNonEnvNotes returns Secure Notes that are NOT marked as pkv_type=env.
+// This includes notes with no pkv_type field or any value other than "env".
+func FilterNonEnvNotes(items []types.Item) []types.Item {
+	var result []types.Item
+	for _, item := range items {
+		if item.Type == types.ItemTypeSecureNote && !item.IsEnv() {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 func (c *Client) getStatus() (*types.Status, error) {
 	cmd := exec.Command("bw", "status")
 	cmd.Env = append(os.Environ(), "BW_NOINTERACTION=true")

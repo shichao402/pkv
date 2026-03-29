@@ -15,6 +15,8 @@ var noteCmd = &cobra.Command{
 	Short: "Sync config notes from a Bitwarden folder to current directory",
 	Long: `Sync all Secure Notes from the specified Bitwarden folder as files in the current directory.
 
+Notes with custom field "pkv_type" set to "env" are excluded (use 'pkv env' for those).
+
 Examples:
   pkv note LyraX          Sync notes from "LyraX" to current directory
   pkv note LyraX clean    Remove previously synced note files`,
@@ -65,7 +67,7 @@ func runNoteSync(folder string) error {
 		return fmt.Errorf("list items failed: %w", err)
 	}
 
-	notes := bw.FilterSecureNotes(items)
+	notes := bw.FilterNonEnvNotes(items)
 	if len(notes) == 0 {
 		fmt.Println("No notes found in folder.")
 		return nil

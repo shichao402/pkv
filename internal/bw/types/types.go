@@ -8,6 +8,14 @@ const (
 	ItemTypeSSHKey     = 5
 )
 
+// PKV type constants for the "pkv_type" custom field in Bitwarden.
+// This field is used to distinguish between env and note items
+// when both are stored as Secure Notes.
+const (
+	PKVFieldName = "pkv_type"
+	PKVTypeEnv   = "env"
+)
+
 type Status struct {
 	ServerURL string `json:"serverUrl"`
 	LastSync  string `json:"lastSync"`
@@ -51,6 +59,16 @@ func (item *Item) GetCustomField(name string) string {
 		}
 	}
 	return ""
+}
+
+// PKVType returns the value of the "pkv_type" custom field, or empty string if not set.
+func (item *Item) PKVType() string {
+	return item.GetCustomField(PKVFieldName)
+}
+
+// IsEnv returns true if the item is explicitly marked as an env item.
+func (item *Item) IsEnv() bool {
+	return item.PKVType() == PKVTypeEnv
 }
 
 // GetHosts extracts host entries from the item's Notes field.
