@@ -39,10 +39,12 @@ func ScanAndAddKnownHosts(sshDir string, hosts []string) error {
 
 	// Run ssh-keyscan
 	var scannedKeys []string
+	var failedTargets []string
 	for _, target := range scanTargets {
 		out, err := exec.Command("ssh-keyscan", "-T", "5", target).Output()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Warning: ssh-keyscan failed for '%s': %v\n", target, err)
+			failedTargets = append(failedTargets, target)
 			continue
 		}
 		lines := strings.TrimSpace(string(out))
@@ -52,7 +54,10 @@ func ScanAndAddKnownHosts(sshDir string, hosts []string) error {
 	}
 
 	if len(scannedKeys) == 0 {
-		return nil
+		return fmt.Errorf("ssh-keyscan failed for all hosts: %s", strings.Join(failedTargets, ", "))
+	}
+	if len(failedTargets) > 0 {
+		fmt.Fprintf(os.Stderr, "  Warning: ssh-keyscan failed for %d host(s): %s\n", len(failedTargets), strings.Join(failedTargets, ", "))
 	}
 
 	existing, err := readFileOrEmpty(knownHostsPath)
@@ -76,7 +81,7 @@ func ScanAndAddKnownHosts(sshDir string, hosts []string) error {
 	block.WriteString("\n")
 
 	content := strings.TrimRight(existing, "\n") + block.String()
-	return os.WriteFile(knownHostsPath, []byte(content), 0600)
+	return os.WriteFile(knownHostsPath, []byte(content), 0o600)
 }
 
 // RemoveKnownHosts removes the PKV managed block from ~/.ssh/known_hosts.
@@ -93,7 +98,7 @@ func RemoveKnownHosts(sshDir string) error {
 
 	cleaned := removeKnownHostsBlock(existing)
 	cleaned = collapseBlankLines(cleaned)
-	return os.WriteFile(knownHostsPath, []byte(cleaned), 0600)
+	return os.WriteFile(knownHostsPath, []byte(cleaned), 0o600)
 }
 
 func removeKnownHostsBlock(content string) string {

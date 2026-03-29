@@ -11,9 +11,31 @@ LDFLAGS = -s -w \
 PLATFORMS = darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64
 DIST_DIR  = dist
 
-.PHONY: build clean release install
+.PHONY: build clean release install lint lint-install lint-fix fmt test test-coverage check
 
-build:
+lint-install:
+	@command -v golangci-lint > /dev/null 2>&1 || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+lint: lint-install
+	golangci-lint run
+
+lint-fix: lint-install
+	golangci-lint run --fix
+
+fmt:
+	go fmt ./...
+
+test:
+	go test -v -race ./...
+
+test-coverage:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+check: fmt lint test
+	go build ./...
+
+build: lint
 	go build -ldflags "$(LDFLAGS)" -o pkv .
 
 install: build
@@ -21,7 +43,7 @@ install: build
 	cp pkv $(HOME)/.local/bin/pkv
 
 clean:
-	rm -rf pkv $(DIST_DIR)
+	rm -rf pkv $(DIST_DIR) coverage.out
 
 release: clean
 	@mkdir -p $(DIST_DIR)

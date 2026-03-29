@@ -1,0 +1,88 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/shichao402/pkv
+
+linters:
+  enable:
+    # Default / must-have
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Code quality
+    - gocritic
+    - revive
+    - unconvert
+    - misspell
+
+    # Security
+    - gosec
+
+    # Meta
+    - nolintlint
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Printf
+        - fmt.Println
+
+    gosec:
+      severity: high
+      confidence: high
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - hugeParam
+
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+
+    misspell:
+      locale: US
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+issues:
+  exclude-dirs:
+    - vendor
+
+  exclude-rules:
+    # Allow unused parameters in cobra command functions
+    - path: cmd/
+      linters:
+        - revive
+      text: "unused-parameter"
+
+    # Allow using fmt.Errorf without %w in simple cases
+    - linters:
+        - gocritic
+      text: "ifElseChain"
+
+  max-issues-per-linter: 50
+  max-same-issues: 5

@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"github.com/shichao402/pkv/internal/bw"
 	"github.com/shichao402/pkv/internal/ssh"
 	"github.com/shichao402/pkv/internal/state"
-	"github.com/spf13/cobra"
 )
 
 var sshCmd = &cobra.Command{
@@ -30,10 +31,7 @@ func runSSH(_ *cobra.Command, args []string) error {
 	folder := args[0]
 
 	if len(args) == 2 {
-		if args[1] != "clean" {
-			return fmt.Errorf("unknown option: %s (expected 'clean')", args[1])
-		}
-		return runSSHClean(folder)
+		return handleCleanCommand(args[1], func() error { return runSSHClean(folder) })
 	}
 
 	return runSSHDeploy(folder)

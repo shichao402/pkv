@@ -67,13 +67,51 @@ func Load() (*State, error) {
 	if err := json.Unmarshal(data, st); err != nil {
 		return nil, err
 	}
+
+	// Validate date fields are in RFC3339 format
+	if err := validateDates(st); err != nil {
+		return nil, err
+	}
+
 	return st, nil
+}
+
+// validateDates checks that all date fields are valid RFC3339 timestamps.
+func validateDates(st *State) error {
+	// Check SSH key dates
+	for _, entry := range st.SSHKeys {
+		if entry.AddedAt != "" {
+			if _, err := time.Parse(time.RFC3339, entry.AddedAt); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Check note dates
+	for _, entry := range st.Notes {
+		if entry.SyncedAt != "" {
+			if _, err := time.Parse(time.RFC3339, entry.SyncedAt); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Check env dates
+	for _, entry := range st.Envs {
+		if entry.SetAt != "" {
+			if _, err := time.Parse(time.RFC3339, entry.SetAt); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // Save writes the state to disk.
 func (s *State) Save() error {
 	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 
@@ -81,7 +119,7 @@ func (s *State) Save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0600)
+	return os.WriteFile(s.path, data, 0o600)
 }
 
 // AddSSHKey records a deployed SSH key.

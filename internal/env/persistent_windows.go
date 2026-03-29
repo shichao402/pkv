@@ -29,5 +29,11 @@ func removePersistentEnv(key string) error {
 }
 
 func escapePS(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
+	// Escape single quotes by doubling them (PowerShell escaping)
+	s = strings.ReplaceAll(s, "'", "''")
+	// Escape backticks (PowerShell escape/command substitution character)
+	s = strings.ReplaceAll(s, "`", "``")
+	// Escape dollar signs (PowerShell variable expansion character)
+	s = strings.ReplaceAll(s, "$", "`$")
+	return s
 }

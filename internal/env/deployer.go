@@ -45,19 +45,39 @@ func ParseEnvVars(content string) ([]EnvVar, error) {
 		key := strings.TrimSpace(line[:idx])
 		value := strings.TrimSpace(line[idx+1:])
 
-		if len(value) >= 2 {
-			if (value[0] == '"' && value[len(value)-1] == '"') ||
-				(value[0] == '\'' && value[len(value)-1] == '\'') {
-				value = value[1 : len(value)-1]
-			}
-		}
+		// Handle quoted values with proper validation
+		value = stripQuotes(value, lineNum)
 
 		vars = append(vars, EnvVar{Key: key, Value: value})
 	}
 	return vars, scanner.Err()
 }
 
+// stripQuotes removes matching quotes from the value if present.
+// Returns the unquoted value, or the original value if quotes don't match.
+func stripQuotes(value string, lineNum int) string {
+	if len(value) < 2 {
+		return value
+	}
+
+	// Check for matching quotes
+	first := value[0]
+	last := value[len(value)-1]
+
+	if first == '"' && last == '"' {
+		return value[1 : len(value)-1]
+	}
+	if first == '\'' && last == '\'' {
+		return value[1 : len(value)-1]
+	}
+
+	// No matching quotes, return as-is
+	// (including cases like "value' or value" with unmatched quotes)
+	return value
+}
+
 // Deploy parses a Secure Note as KEY=VALUE pairs and sets them as persistent environment variables.
+// If some variables fail to set, it will try to continue with others and report partial failures.
 func (d *Deployer) Deploy(item types.Item) ([]EnvVar, error) {
 	if item.Notes == "" {
 		return nil, fmt.Errorf("item '%s' has no content", item.Name)
@@ -68,33 +88,58 @@ func (d *Deployer) Deploy(item types.Item) ([]EnvVar, error) {
 		return nil, fmt.Errorf("parse '%s': %w", item.Name, err)
 	}
 
+	var failedVars []string
+	var successVars []EnvVar
 	for _, v := range vars {
 		if err := setPersistentEnv(v.Key, v.Value); err != nil {
-			return nil, fmt.Errorf("set %s: %w", v.Key, err)
+			failedVars = append(failedVars, fmt.Sprintf("%s (%v)", v.Key, err))
+			continue
 		}
-		os.Setenv(v.Key, v.Value)
+		_ = os.Setenv(v.Key, v.Value)
+		successVars = append(successVars, v)
 	}
 
-	keys := make([]string, len(vars))
-	for i, v := range vars {
+	// Only record successfully set variables
+	keys := make([]string, len(successVars))
+	for i, v := range successVars {
 		keys[i] = v.Key
 	}
-	d.state.AddEnv(state.EnvEntry{
-		ItemID: item.ID,
-		Name:   item.Name,
-		Keys:   keys,
-	})
+	if len(keys) > 0 {
+		d.state.AddEnv(state.EnvEntry{
+			ItemID: item.ID,
+			Name:   item.Name,
+			Keys:   keys,
+		})
+	}
 
-	return vars, nil
+	// Report all failures after attempting all variables
+	if len(failedVars) > 0 {
+		if len(successVars) > 0 {
+			return successVars, fmt.Errorf("partial failure: %s (deployed %d/%d variables)", strings.Join(failedVars, "; "), len(successVars), len(vars))
+		}
+		return nil, fmt.Errorf("all %d variables failed: %s", len(vars), strings.Join(failedVars, "; "))
+	}
+
+	return successVars, nil
 }
 
 // Remove unsets previously deployed environment variables.
+// Attempts to remove all variables and reports any failures at the end.
 func (d *Deployer) Remove(entry state.EnvEntry) error {
+	var failedKeys []string
 	for _, key := range entry.Keys {
 		if err := removePersistentEnv(key); err != nil {
-			return fmt.Errorf("remove %s: %w", key, err)
+			failedKeys = append(failedKeys, fmt.Sprintf("%s (%v)", key, err))
+			continue
 		}
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
+	}
+
+	if len(failedKeys) > 0 {
+		if len(failedKeys) == len(entry.Keys) {
+			return fmt.Errorf("failed to remove all %d variables: %s", len(entry.Keys), strings.Join(failedKeys, "; "))
+		}
+		return fmt.Errorf("partial failure removing variables: %s (removed %d/%d)", strings.Join(failedKeys, "; "), len(entry.Keys)-len(failedKeys), len(entry.Keys))
 	}
 	return nil
 }

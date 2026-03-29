@@ -9,12 +9,13 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/shichao402/pkv/internal/version"
 	"github.com/spf13/cobra"
+
+	"github.com/shichao402/pkv/internal/version"
 )
 
 const (
-	githubRepo       = "shichao402/pkv"
+	githubRepo        = "shichao402/pkv"
 	githubReleasesURL = "https://github.com/" + githubRepo + "/releases/latest"
 )
 
@@ -55,7 +56,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
-	defer os.Remove(tmpFile)
+	defer func() { _ = os.Remove(tmpFile) }()
 
 	execPath, err := os.Executable()
 	if err != nil {
@@ -129,15 +130,15 @@ func downloadAsset(url string) (string, error) {
 	}
 
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
 		return "", err
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Make executable
-	if err := os.Chmod(tmpFile.Name(), 0755); err != nil {
-		os.Remove(tmpFile.Name())
+	if err := os.Chmod(tmpFile.Name(), 0o755); err != nil {
+		_ = os.Remove(tmpFile.Name())
 		return "", err
 	}
 
@@ -154,11 +155,15 @@ func replaceBinary(targetPath, newBinaryPath string) error {
 	// Move new binary into place
 	if err := os.Rename(newBinaryPath, targetPath); err != nil {
 		// Rollback: restore backup
-		os.Rename(backupPath, targetPath)
-		return fmt.Errorf("install new binary: %w", err)
+		if rbErr := os.Rename(backupPath, targetPath); rbErr != nil {
+			return fmt.Errorf("install new binary: %w (rollback also failed: %v; backup at %s)", err, rbErr, backupPath)
+		}
+		return fmt.Errorf("install new binary: %w (rolled back to previous version)", err)
 	}
 
-	// Remove backup
-	os.Remove(backupPath)
+	// Remove backup (non-critical, warn on failure)
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove backup file %s: %v\n", backupPath, err)
+	}
 	return nil
 }

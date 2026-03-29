@@ -46,8 +46,8 @@ type CustomField struct {
 }
 
 type SSHKeyData struct {
-	PrivateKey string `json:"privateKey"`
-	PublicKey  string `json:"publicKey"`
+	PrivateKey     string `json:"privateKey"`
+	PublicKey      string `json:"publicKey"`
 	KeyFingerprint string `json:"keyFingerprint"`
 }
 

@@ -16,11 +16,16 @@ const (
 )
 
 func setPersistentEnv(key, value string) error {
+	// Validate environment variable name
+	if !isValidEnvVarName(key) {
+		return fmt.Errorf("invalid environment variable name: %s", key)
+	}
+
 	envFile, err := envFilePath()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(envFile), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(envFile), 0o700); err != nil {
 		return err
 	}
 
@@ -41,13 +46,18 @@ func setPersistentEnv(key, value string) error {
 		lines = append(lines, exportLine)
 	}
 
-	if err := os.WriteFile(envFile, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+	if err := os.WriteFile(envFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		return err
 	}
 	return ensureSourced()
 }
 
 func removePersistentEnv(key string) error {
+	// Validate environment variable name
+	if !isValidEnvVarName(key) {
+		return fmt.Errorf("invalid environment variable name: %s", key)
+	}
+
 	envFile, err := envFilePath()
 	if err != nil {
 		return err
@@ -72,7 +82,7 @@ func removePersistentEnv(key string) error {
 	if len(filtered) == 0 {
 		return os.Remove(envFile)
 	}
-	return os.WriteFile(envFile, []byte(strings.Join(filtered, "\n")+"\n"), 0600)
+	return os.WriteFile(envFile, []byte(strings.Join(filtered, "\n")+"\n"), 0o600)
 }
 
 func envFilePath() (string, error) {
@@ -101,8 +111,27 @@ func ensureSourced() error {
 		return err
 	}
 
-	for _, rc := range []string{".bashrc", ".zshrc"} {
+	// List of shell rc files to check and update, in order of preference
+	// Common shells: bash, zsh, fish, ksh, tcsh, sh (fallback)
+	rcFiles := []string{
+		".bashrc",                  // bash
+		".zshrc",                   // zsh
+		".profile",                 // sh/POSIX shell (fallback)
+		".kshrc",                   // ksh
+		".tcshrc",                  // tcsh
+		".config/fish/config.fish", // fish shell
+	}
+
+	for _, rc := range rcFiles {
 		rcPath := filepath.Join(home, rc)
+		// Ensure directory exists for nested paths (like .config/fish/config.fish)
+		rcDir := filepath.Dir(rcPath)
+		if rcDir != home {
+			if _, err := os.Stat(rcDir); os.IsNotExist(err) {
+				continue
+			}
+		}
+
 		if _, err := os.Stat(rcPath); os.IsNotExist(err) {
 			continue
 		}
@@ -113,16 +142,39 @@ func ensureSourced() error {
 		if strings.Contains(string(data), sourceTag) {
 			continue
 		}
-		f, err := os.OpenFile(rcPath, os.O_APPEND|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(rcPath, os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			continue
 		}
 		fmt.Fprintf(f, "\n# PKV managed environment variables\n%s\n", sourceLine)
-		f.Close()
+		_ = f.Close()
 	}
 	return nil
 }
 
 func escapeShellQuote(s string) string {
 	return strings.ReplaceAll(s, "'", `'\''`)
+}
+
+// isValidEnvVarName validates that the string is a valid environment variable name.
+// Valid names must match [A-Za-z_][A-Za-z0-9_]* per POSIX standard.
+func isValidEnvVarName(name string) bool {
+	if name == "" {
+		return false
+	}
+	// First character must be letter or underscore
+	c := name[0]
+	isFirstValid := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+	if !isFirstValid {
+		return false
+	}
+	// Remaining characters must be letters, digits, or underscore
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		isValid := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+		if !isValid {
+			return false
+		}
+	}
+	return true
 }

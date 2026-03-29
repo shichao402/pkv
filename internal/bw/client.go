@@ -110,7 +110,7 @@ func FilterSecureNotes(items []types.Item) []types.Item {
 
 // FilterEnvNotes returns Secure Notes that are explicitly marked with pkv_type=env.
 // Items without the pkv_type field or with a different value are excluded.
-func FilterEnvNotes(items []types.Item) (matched []types.Item, skipped []types.Item) {
+func FilterEnvNotes(items []types.Item) (matched, skipped []types.Item) {
 	for _, item := range items {
 		if item.Type != types.ItemTypeSecureNote {
 			continue

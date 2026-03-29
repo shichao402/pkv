@@ -26,24 +26,24 @@ func AddHostEntries(configPath, keyName, keyFile string, hosts []string) error {
 	// Build new block
 	var block strings.Builder
 	block.WriteString("\n")
-	block.WriteString(fmt.Sprintf(markerStart, keyName))
+	fmt.Fprintf(&block, markerStart, keyName)
 	block.WriteString("\n")
 	for _, host := range hosts {
 		hostname, port := parseHostPort(host)
-		block.WriteString(fmt.Sprintf("Host %s\n", hostname))
-		block.WriteString(fmt.Sprintf("    HostName %s\n", hostname))
+		fmt.Fprintf(&block, "Host %s\n", hostname)
+		fmt.Fprintf(&block, "    HostName %s\n", hostname)
 		if port != "" {
-			block.WriteString(fmt.Sprintf("    Port %s\n", port))
+			fmt.Fprintf(&block, "    Port %s\n", port)
 		}
-		block.WriteString(fmt.Sprintf("    IdentityFile %s\n", keyFile))
+		fmt.Fprintf(&block, "    IdentityFile %s\n", keyFile)
 		block.WriteString("    IdentitiesOnly yes\n")
 		block.WriteString("\n")
 	}
-	block.WriteString(fmt.Sprintf(markerEnd, keyName))
+	fmt.Fprintf(&block, markerEnd, keyName)
 	block.WriteString("\n")
 
 	content := strings.TrimRight(existing, "\n") + block.String()
-	return os.WriteFile(configPath, []byte(content), 0600)
+	return os.WriteFile(configPath, []byte(content), 0o600)
 }
 
 // RemoveHostEntries removes the managed block for the given key name from the SSH config.
@@ -59,7 +59,7 @@ func RemoveHostEntries(configPath, keyName string) error {
 
 	cleaned := removeManagedBlock(existing, keyName)
 	cleaned = collapseBlankLines(cleaned)
-	return os.WriteFile(configPath, []byte(cleaned), 0600)
+	return os.WriteFile(configPath, []byte(cleaned), 0o600)
 }
 
 func removeManagedBlock(content, keyName string) string {
@@ -89,7 +89,7 @@ func removeManagedBlock(content, keyName string) string {
 }
 
 // parseHostPort splits "host:port" into (host, port). If no port, returns (host, "").
-func parseHostPort(s string) (string, string) {
+func parseHostPort(s string) (host, port string) {
 	// Handle [ipv6]:port
 	if strings.HasPrefix(s, "[") {
 		if idx := strings.LastIndex(s, "]:"); idx != -1 {

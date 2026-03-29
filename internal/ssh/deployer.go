@@ -34,7 +34,7 @@ func (d *Deployer) Deploy(item types.Item) error {
 	pubFile := keyFile + ".pub"
 
 	// Ensure ~/.ssh/ exists
-	if err := os.MkdirAll(d.sshDir, 0700); err != nil {
+	if err := os.MkdirAll(d.sshDir, 0o700); err != nil {
 		return fmt.Errorf("create .ssh dir: %w", err)
 	}
 
@@ -43,7 +43,7 @@ func (d *Deployer) Deploy(item types.Item) error {
 	if !strings.HasSuffix(privateKey, "\n") {
 		privateKey += "\n"
 	}
-	if err := os.WriteFile(keyFile, []byte(privateKey), 0600); err != nil {
+	if err := os.WriteFile(keyFile, []byte(privateKey), 0o600); err != nil {
 		return fmt.Errorf("write private key: %w", err)
 	}
 
@@ -53,7 +53,7 @@ func (d *Deployer) Deploy(item types.Item) error {
 		if !strings.HasSuffix(pubKey, "\n") {
 			pubKey += "\n"
 		}
-		if err := os.WriteFile(pubFile, []byte(pubKey), 0644); err != nil {
+		if err := os.WriteFile(pubFile, []byte(pubKey), 0o644); err != nil {
 			return fmt.Errorf("write public key: %w", err)
 		}
 	}
@@ -89,16 +89,25 @@ func (d *Deployer) DeployKnownHosts(allHosts []string) error {
 
 // Remove removes a deployed SSH key and its config entries.
 func (d *Deployer) Remove(entry state.SSHKeyEntry) error {
-	os.Remove(entry.KeyFile)
-	os.Remove(entry.PubFile)
+	var errs []string
+
+	if err := os.Remove(entry.KeyFile); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, fmt.Sprintf("remove private key %s: %v", entry.KeyFile, err))
+	}
+	if err := os.Remove(entry.PubFile); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, fmt.Sprintf("remove public key %s: %v", entry.PubFile, err))
+	}
 
 	if len(entry.Hosts) > 0 {
 		configPath := filepath.Join(d.sshDir, "config")
 		if err := RemoveHostEntries(configPath, entry.KeyName); err != nil {
-			return fmt.Errorf("remove ssh config entries: %w", err)
+			errs = append(errs, fmt.Sprintf("remove ssh config entries: %v", err))
 		}
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("cleanup errors: %s", strings.Join(errs, "; "))
+	}
 	return nil
 }
 
