@@ -1,4 +1,5 @@
 pkv
+pkv-test
 dist/
 *.exe
 .DS_Store
