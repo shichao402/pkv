@@ -10,9 +10,10 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:     "pkv",
-	Short:   "Personal Key Vault - manage SSH keys and configs from Bitwarden",
-	Version: version.Version,
+	Use:          "pkv",
+	Short:        "Personal Key Vault - manage SSH keys and configs from Bitwarden",
+	Version:      version.Version,
+	SilenceUsage: true,
 }
 
 // handleCleanCommand validates the clean command and calls the provided handler.
