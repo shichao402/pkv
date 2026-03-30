@@ -6,6 +6,7 @@
 
 - 🔐 **从 Bitwarden 自动部署 SSH 密钥** - 无需手动复制粘贴
 - ⚡ **自动配置 SSH** - 生成完整的 `~/.ssh/config`，支持自定义端口、多主机
+- 🔑 **导入 SSH 密钥到 Bitwarden** - 将本地 SSH 私钥存储为 Bitwarden 原生 SSH Key Item
 - 🌐 **部署环境变量** - 从 Bitwarden Note 同步 KEY=VALUE 到系统环境变量
 - 📝 **同步敏感配置文件** - 将 Bitwarden Note 快速导出到当前目录
 - 🧹 **精确清理** - 支持 `clean` 命令，安全移除部署的密钥和配置，不损害手动添加的内容
@@ -124,6 +125,32 @@ pkv note LyraX clean
 ```
 
 ## 命令参考
+
+### 导入 SSH 密钥到 Bitwarden
+
+```bash
+pkv key add                    # 交互式导入 SSH 密钥
+pkv key add --priv ~/.ssh/id_rsa --name "my-key"  # 指定参数导入
+```
+
+**选项**：
+- `--priv` - 私钥文件路径（省略则交互式输入）
+- `--pub` - 公钥内容，`ssh-rsa AAAA...` 格式（省略则从私钥自动生成）
+- `--name` - 密钥在 Bitwarden 中的名称（省略则交互式输入）
+
+**支持的私钥格式**：PEM（PKCS1/PKCS8/EC）、OpenSSH，自动转换为 OpenSSH 标准格式存储。
+
+**例子**：
+```bash
+# 交互式导入（逐步提示输入）
+pkv key add
+
+# 指定私钥路径和名称，公钥自动生成
+pkv key add --priv ~/.ssh/id_ed25519 --name "github-key"
+
+# 指定所有参数
+pkv key add --priv ~/.ssh/id_rsa --pub "ssh-rsa AAAA..." --name "server-key"
+```
 
 ### 部署环境变量
 
