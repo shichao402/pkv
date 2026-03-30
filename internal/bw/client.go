@@ -86,6 +86,12 @@ func (c *Client) ListItems(session, folderID string) ([]types.Item, error) {
 	return items, nil
 }
 
+// DeleteItem deletes a Bitwarden item by ID.
+func (c *Client) DeleteItem(session, itemID string) error {
+	_, err := c.run(session, "delete", "item", itemID)
+	return err
+}
+
 // FilterSSHKeys returns only SSH key items (type=5) from the list.
 func FilterSSHKeys(items []types.Item) []types.Item {
 	var result []types.Item

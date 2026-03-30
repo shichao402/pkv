@@ -6,7 +6,7 @@
 
 - 🔐 **从 Bitwarden 自动部署 SSH 密钥** - 无需手动复制粘贴
 - ⚡ **自动配置 SSH** - 生成完整的 `~/.ssh/config`，支持自定义端口、多主机
-- 🔑 **导入 SSH 密钥到 Bitwarden** - 将本地 SSH 私钥存储为 Bitwarden 原生 SSH Key Item
+- 🔑 **导入 SSH 密钥到 Bitwarden** - 将本地 SSH 私钥存储到指定文件夹的 Bitwarden SSH Key Item
 - 🌐 **部署环境变量** - 从 Bitwarden Note 同步 KEY=VALUE 到系统环境变量
 - 📝 **同步敏感配置文件** - 将 Bitwarden Note 快速导出到当前目录
 - 🧹 **精确清理** - 支持 `clean` 命令，安全移除部署的密钥和配置，不损害手动添加的内容
@@ -126,14 +126,17 @@ pkv note LyraX clean
 
 ## 命令参考
 
-### 导入 SSH 密钥到 Bitwarden
+### 管理 SSH 密钥
 
 ```bash
-pkv key add                    # 交互式导入 SSH 密钥
-pkv key add --priv ~/.ssh/id_rsa --name "my-key"  # 指定参数导入
+pkv ssh <folder>                       # 从指定文件夹部署 SSH 密钥
+pkv ssh <folder> list                  # 列出文件夹中的 SSH 密钥
+pkv ssh <folder> add                   # 交互式导入本地 SSH 密钥到文件夹
+pkv ssh <folder> remove <id> [id2]...  # 从 Bitwarden 删除指定密钥
+pkv ssh <folder> clean                 # 清理本地已部署的 SSH 密钥
 ```
 
-**选项**：
+**`add` 选项**：
 - `--priv` - 私钥文件路径（省略则交互式输入）
 - `--pub` - 公钥内容，`ssh-rsa AAAA...` 格式（省略则从私钥自动生成）
 - `--name` - 密钥在 Bitwarden 中的名称（省略则交互式输入）
@@ -142,14 +145,11 @@ pkv key add --priv ~/.ssh/id_rsa --name "my-key"  # 指定参数导入
 
 **例子**：
 ```bash
-# 交互式导入（逐步提示输入）
-pkv key add
-
-# 指定私钥路径和名称，公钥自动生成
-pkv key add --priv ~/.ssh/id_ed25519 --name "github-key"
-
-# 指定所有参数
-pkv key add --priv ~/.ssh/id_rsa --pub "ssh-rsa AAAA..." --name "server-key"
+pkv ssh LyraX                  # 部署文件夹中所有密钥
+pkv ssh LyraX list             # 列出密钥（显示 ID、名称、指纹、主机）
+pkv ssh LyraX add --priv ~/.ssh/id_ed25519 --name "github-key"  # 导入密钥
+pkv ssh LyraX remove 123e4567-e89b-12d3-a456-426614174000       # 删除密钥
+pkv ssh LyraX clean            # 清理本地部署
 ```
 
 ### 部署环境变量
@@ -165,23 +165,6 @@ pkv env <folder> clean         # 清理已部署的环境变量
 ```bash
 pkv env credentials            # 部署
 pkv env credentials clean      # 清理
-```
-
-### 部署 SSH 密钥
-
-```bash
-pkv ssh <folder>               # 从指定文件夹部署 SSH 密钥
-pkv ssh <folder> clean         # 清理已部署的 SSH 密钥
-```
-
-**选项**：
-- `<folder>` - Bitwarden 文件夹名（如 `LyraX`、`work-keys` 等）
-
-**例子**：
-```bash
-pkv ssh LyraX                  # 部署
-pkv ssh LyraX clean            # 清理
-pkv ssh work-keys              # 使用其他文件夹
 ```
 
 ### 同步配置文件

@@ -13,6 +13,7 @@ type InputConfig struct {
 	PrivatePath string // --priv flag
 	PublicKey   string // --pub flag
 	KeyName     string // --name flag
+	Folder      string // folder name (from positional arg)
 }
 
 // InteractiveInput prompts user for missing inputs
@@ -105,10 +106,15 @@ func InteractiveInput(cfg *InputConfig) error {
 // ConfirmAndCreate shows a summary and asks for confirmation before creating
 func ConfirmAndCreate(cfg *InputConfig, fingerprint string) (bool, error) {
 	fmt.Println("\n=== Summary ===")
+	fmt.Printf("Folder:        %s\n", cfg.Folder)
 	fmt.Printf("Key Name:      %s\n", cfg.KeyName)
 	fmt.Printf("Private Key:   %s\n", cfg.PrivatePath)
 	fmt.Printf("Fingerprint:   %s\n", fingerprint)
-	fmt.Printf("Public Key:    %s...\n", cfg.PublicKey[:50])
+	if len(cfg.PublicKey) > 50 {
+		fmt.Printf("Public Key:    %s...\n", cfg.PublicKey[:50])
+	} else {
+		fmt.Printf("Public Key:    %s\n", cfg.PublicKey)
+	}
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("\nCreate this SSH key in Bitwarden? (yes/no): ")
