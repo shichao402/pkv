@@ -155,31 +155,84 @@ pkv ssh LyraX clean            # 清理本地部署
 ### 部署环境变量
 
 ```bash
-pkv env <folder>               # 从指定文件夹部署环境变量（仅处理 pkv_type=env 的 Note）
-pkv env <folder> clean         # 清理已部署的环境变量
+pkv env <folder>                           # 从指定文件夹部署环境变量（仅处理 pkv_type=env 的 Note）
+pkv env <folder> list                      # 列出文件夹中的环境变量 Note
+pkv env <folder> add --name <name> [--file <path>]  # 创建环境变量 Note
+pkv env <folder> remove <id> [id2]...      # 从 Bitwarden 删除指定的环境变量 Note
+pkv env <folder> edit <name-or-id>         # 用 $EDITOR 编辑环境变量 Note
+pkv env <folder> clean                     # 清理已部署的环境变量
 ```
+
+**`add` 选项**：
+- `--name` - Note 名称（必需）
+- `--file` - 从文件读取内容；省略则打开 `$EDITOR` 编写
+
+**`edit` 参数**：
+- `<name-or-id>` - 支持按名称或 ID 定位，优先按名称匹配
 
 **要求**：Secure Note 必须设置自定义字段 `pkv_type=env`，否则会被跳过。
 
 **例子**：
 ```bash
 pkv env credentials            # 部署
+pkv env credentials list       # 列出
+pkv env credentials add --name "database" --file .env.prod  # 从文件创建
+pkv env credentials edit "database"  # 编辑
+pkv env credentials remove abc123def  # 删除
 pkv env credentials clean      # 清理
 ```
 
 ### 同步配置文件
 
 ```bash
-pkv note <folder>              # 从指定文件夹导出 Note 到当前目录（排除 pkv_type=env）
-pkv note <folder> clean        # 移除已同步的 Note 文件
+pkv note <folder>                          # 从指定文件夹导出 Note 到当前目录（排除 pkv_type=env）
+pkv note <folder> list                     # 列出文件夹中的配置 Note
+pkv note <folder> add --name <name> [--file <path>]  # 创建配置 Note
+pkv note <folder> remove <id> [id2]...     # 从 Bitwarden 删除指定配置 Note
+pkv note <folder> edit <name-or-id>        # 用 $EDITOR 编辑配置 Note
+pkv note <folder> clean                    # 移除已同步的 Note 文件
 ```
+
+**`add` 选项**：
+- `--name` - Note 名称（必需）
+- `--file` - 从文件读取内容；省略则打开 `$EDITOR` 编写
+
+**`edit` 参数**：
+- `<name-or-id>` - 支持按名称或 ID 定位，优先按名称匹配
 
 **例子**：
 ```bash
 mkdir ~/config && cd ~/config
 pkv note LyraX                 # 同步所有 note 到 ~/config/
+pkv note LyraX list            # 列出
+pkv note LyraX add --name "nginx.conf" --file /etc/nginx/nginx.conf  # 创建
+pkv note LyraX edit "nginx.conf"  # 编辑
+pkv note LyraX remove abc123def   # 删除
 pkv note LyraX clean           # 清理
 ```
+
+## 编辑器配置
+
+`pkv note add` 和 `pkv env add` 命令在不使用 `--file` 选项时，以及 `edit` 命令会打开编辑器。
+
+编辑器选择优先级：
+1. 环境变量 `$EDITOR` 中指定的编辑器
+2. Linux/macOS 默认降级到 `vi`
+3. Windows 默认降级到 `notepad`
+
+**设置编辑器**：
+```bash
+# 使用 vim
+export EDITOR=vim
+
+# 使用 VS Code（需安装 `code` 命令）
+export EDITOR="code --wait"
+
+# 使用 nano
+export EDITOR=nano
+```
+
+编辑完成后保存退出即可（`:wq` 在 vim 中，`Ctrl+S` 后 `Ctrl+X` 在 nano 中）。
 
 ### 更新
 

@@ -226,3 +226,36 @@ func TestFilterNonEnvNotes(t *testing.T) {
 		})
 	}
 }
+
+func TestBaseEncode(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []byte
+		wantLen int
+	}{
+		{
+			name:    "empty bytes",
+			input:   []byte{},
+			wantLen: 0,
+		},
+		{
+			name:    "simple string",
+			input:   []byte("hello"),
+			wantLen: 8, // base64 of "hello" is 8 chars
+		},
+		{
+			name:    "json-like string",
+			input:   []byte(`{"type":2,"name":"test"}`),
+			wantLen: 32, // base64 encoded length
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded := base64Encode(tt.input)
+			if len(encoded) != tt.wantLen {
+				t.Errorf("base64Encode() length = %d, want %d", len(encoded), tt.wantLen)
+			}
+		})
+	}
+}

@@ -391,3 +391,124 @@ func TestEnvItemIDsByRecency(t *testing.T) {
 		}
 	})
 }
+
+func TestRemoveNote(t *testing.T) {
+	tests := []struct {
+		name      string
+		initialID string
+		removeID  string
+		wantCount int
+	}{
+		{
+			name:      "remove existing note",
+			initialID: "note-1",
+			removeID:  "note-1",
+			wantCount: 0,
+		},
+		{
+			name:      "remove non-existent note leaves state unchanged",
+			initialID: "note-1",
+			removeID:  "note-2",
+			wantCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &State{
+				Notes: []NoteEntry{{ItemID: tt.initialID, FileName: "test.txt"}},
+			}
+
+			s.RemoveNote(tt.removeID)
+
+			if len(s.Notes) != tt.wantCount {
+				t.Errorf("RemoveNote() left %d notes, want %d", len(s.Notes), tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestRemoveEnvByItemID(t *testing.T) {
+	tests := []struct {
+		name       string
+		initialID  string
+		removeID   string
+		wantCount  int
+		description string
+	}{
+		{
+			name:        "remove existing env",
+			initialID:   "env-1",
+			removeID:    "env-1",
+			wantCount:   0,
+			description: "removes the matching env entry",
+		},
+		{
+			name:        "remove non-existent env leaves state unchanged",
+			initialID:   "env-1",
+			removeID:    "env-2",
+			wantCount:   1,
+			description: "non-existent ID leaves state intact",
+		},
+		{
+			name:        "remove from multiple envs",
+			initialID:   "env-1",
+			removeID:    "env-1",
+			wantCount:   0,
+			description: "removes correct entry from list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.description, func(t *testing.T) {
+			s := &State{
+				Envs: []EnvEntry{
+					{ItemID: tt.initialID, Name: "github", Keys: []string{"TOKEN"}},
+					{ItemID: "env-2", Name: "app", Keys: []string{"SECRET"}},
+				},
+			}
+
+			initialCount := len(s.Envs)
+			s.RemoveEnvByItemID(tt.removeID)
+
+			if len(s.Envs) > initialCount {
+				t.Errorf("RemoveEnvByItemID() increased env count")
+			}
+
+			for _, env := range s.Envs {
+				if env.ItemID == tt.removeID {
+					t.Errorf("RemoveEnvByItemID() did not remove entry with ID %s", tt.removeID)
+				}
+			}
+		})
+	}
+}
+
+func TestRemoveNoteMultiple(t *testing.T) {
+	t.Run("remove from multiple notes", func(t *testing.T) {
+		s := &State{
+			Notes: []NoteEntry{
+				{ItemID: "note-1", FileName: "file1.txt"},
+				{ItemID: "note-2", FileName: "file2.txt"},
+				{ItemID: "note-3", FileName: "file3.txt"},
+			},
+		}
+
+		s.RemoveNote("note-2")
+
+		if len(s.Notes) != 2 {
+			t.Errorf("RemoveNote() left %d notes, want 2", len(s.Notes))
+		}
+
+		for _, note := range s.Notes {
+			if note.ItemID == "note-2" {
+				t.Error("RemoveNote() did not remove the target entry")
+			}
+		}
+
+		// Verify order is preserved
+		if s.Notes[0].ItemID != "note-1" || s.Notes[1].ItemID != "note-3" {
+			t.Errorf("RemoveNote() corrupted note order")
+		}
+	})
+}

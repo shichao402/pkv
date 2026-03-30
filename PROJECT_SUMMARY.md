@@ -9,12 +9,16 @@ pkv/
 ├── cmd/
 │   ├── root.go                  # 根命令 & 版本管理
 │   ├── ssh.go                   # SSH 密钥部署命令
-│   ├── note.go                  # Note 同步命令
+│   ├── note.go                  # Note 管理命令 (list/add/remove/edit/sync/clean)
+│   ├── env.go                   # Env 管理命令 (list/add/remove/edit/deploy/clean)
 │   └── update.go                # 自更新命令
 ├── internal/
 │   ├── bw/
 │   │   ├── client.go            # Bitwarden CLI 包装
 │   │   └── types/types.go       # 数据类型定义
+│   ├── securenote/
+│   │   ├── securenote.go        # Note/Env 共用逻辑 (Add, Edit, ResolveItem)
+│   │   └── editor.go            # $EDITOR 交互
 │   ├── ssh/
 │   │   ├── deployer.go          # SSH 部署逻辑
 │   │   ├── config.go            # ~/.ssh/config 管理
@@ -45,7 +49,12 @@ pkv/
 - ✅ known_hosts 自动扫描
 - ✅ SSH 密钥精确清理 (`pkv ssh <folder> clean`)
 - ✅ Note 同步导出 (`pkv note <folder>`)
+- ✅ Note 管理命令 (`pkv note <folder> list/add/remove/edit`)
 - ✅ Note 精确清理 (`pkv note <folder> clean`)
+- ✅ Env 部署 (`pkv env <folder>`)
+- ✅ Env 管理命令 (`pkv env <folder> list/add/remove/edit`)
+- ✅ Env 精确清理 (`pkv env <folder> clean`)
+- ✅ 编辑器支持 ($EDITOR，支持 vi/vim/code/nano 等)
 - ✅ 自更新功能 (`pkv update`)
 - ✅ 版本管理
 
@@ -55,15 +64,18 @@ pkv/
 - ✅ 跨平台交叉编译（4 个平台）
 - ✅ 一键安装脚本（支持自动 PATH 配置）
 - ✅ SHA256 校验和生成
+- ✅ 全面的单元测试（36+ 测试用例，覆盖 securenote、state、bw 核心模块）
+- ✅ 无 Mock 框架设计（直接构造测试数据，遵循项目既有模式）
 
 ### 文档
-- ✅ 完整 README（中文）
+- ✅ 完整 README（中文，含编辑器配置说明）
 - ✅ 快速开始指南
-- ✅ 命令参考
+- ✅ 命令参考（含新增 list/add/remove/edit 子命令）
 - ✅ 故障排除
 - ✅ 安全考虑说明
 - ✅ 贡献指南
 - ✅ 发布清单
+- ✅ 测试总结文档 (TEST_SUMMARY.md)
 
 ### 安全
 - ✅ 无硬编码密钥或密码

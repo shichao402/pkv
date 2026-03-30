@@ -1,6 +1,7 @@
 package bw
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -90,6 +91,50 @@ func (c *Client) ListItems(session, folderID string) ([]types.Item, error) {
 func (c *Client) DeleteItem(session, itemID string) error {
 	_, err := c.run(session, "delete", "item", itemID)
 	return err
+}
+
+// GetItem fetches a single Bitwarden item by ID.
+func (c *Client) GetItem(session, itemID string) (types.Item, error) {
+	out, err := c.run(session, "get", "item", itemID)
+	if err != nil {
+		return types.Item{}, err
+	}
+
+	var item types.Item
+	if err := json.Unmarshal([]byte(out), &item); err != nil {
+		return types.Item{}, fmt.Errorf("failed to parse item: %w", err)
+	}
+	return item, nil
+}
+
+// GetItemRaw fetches a single Bitwarden item by ID as raw JSON string.
+func (c *Client) GetItemRaw(session, itemID string) (string, error) {
+	out, err := c.run(session, "get", "item", itemID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// CreateItem creates a Bitwarden item from JSON data, returns the created item's raw JSON output.
+func (c *Client) CreateItem(session string, itemJSON []byte) (string, error) {
+	encoded := base64Encode(itemJSON)
+	out, err := c.run(session, "create", "item", encoded)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// EditItem updates an existing Bitwarden item with the given JSON data.
+func (c *Client) EditItem(session, itemID string, itemJSON []byte) error {
+	encoded := base64Encode(itemJSON)
+	_, err := c.run(session, "edit", "item", itemID, encoded)
+	return err
+}
+
+func base64Encode(data []byte) string {
+	return base64.StdEncoding.EncodeToString(data)
 }
 
 // FilterSSHKeys returns only SSH key items (type=5) from the list.

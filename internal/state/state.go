@@ -246,3 +246,25 @@ func (s *State) RemoveStoredSSHKey(itemID string) {
 	}
 	s.SSHKeys = kept
 }
+
+// RemoveNote removes a note entry by itemID.
+func (s *State) RemoveNote(itemID string) {
+	var kept []NoteEntry
+	for _, e := range s.Notes {
+		if e.ItemID != itemID {
+			kept = append(kept, e)
+		}
+	}
+	s.Notes = kept
+}
+
+// RemoveEnvByItemID removes an env entry by itemID.
+func (s *State) RemoveEnvByItemID(itemID string) {
+	var kept []EnvEntry
+	for _, e := range s.Envs {
+		if e.ItemID != itemID {
+			kept = append(kept, e)
+		}
+	}
+	s.Envs = kept
+}

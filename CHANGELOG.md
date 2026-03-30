@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.3.0] - TBD
+
+### Added
+- `pkv note <folder> list` - List Secure Notes in a Bitwarden folder
+- `pkv note <folder> add --name <name> [--file <path>]` - Create Secure Note (via file or $EDITOR)
+- `pkv note <folder> remove <id>` - Delete Secure Note from Bitwarden
+- `pkv note <folder> edit <name-or-id>` - Edit Secure Note content in $EDITOR
+- `pkv env <folder> list` - List environment variable Notes
+- `pkv env <folder> add --name <name> [--file <path>]` - Create environment variable Note
+- `pkv env <folder> remove <id>` - Delete environment variable Note from Bitwarden
+- `pkv env <folder> edit <name-or-id>` - Edit environment variable Note
+- $EDITOR support for interactive editing with fallback to vi (Unix) / notepad (Windows)
+- Item resolution by both name and ID (name takes precedence)
+- Comprehensive unit tests for securenote operations (36+ test cases)
+
+### Changed
+- Refactored `pkv note` and `pkv env` to support subcommands (add/list/remove/edit)
+- `pkv note <folder>` and `pkv env <folder>` now default to sync/deploy (consistent with v0.2.2)
+
 ## [v0.2.3] - 2026-03-29
 
 ### Changed

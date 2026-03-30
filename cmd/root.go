@@ -16,14 +16,6 @@ var rootCmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
-// handleCleanCommand validates the clean command and calls the provided handler.
-func handleCleanCommand(option string, handler func() error) error {
-	if option != "clean" {
-		return fmt.Errorf("unknown option: %s (expected 'clean')", option)
-	}
-	return handler()
-}
-
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

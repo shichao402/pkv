@@ -4,23 +4,23 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/shichao402/pkv/internal/bw"
 	"github.com/shichao402/pkv/internal/env"
+	"github.com/shichao402/pkv/internal/securenote"
 	"github.com/shichao402/pkv/internal/state"
 )
 
 var envCmd = &cobra.Command{
-	Use:   "env <folder> [clean]",
-	Short: "Deploy environment variables from a Bitwarden folder",
-	Long: `Deploy environment variables from Secure Notes in the specified Bitwarden folder.
+	Use:   "env <folder> [add|list|remove|edit|clean]",
+	Short: "Manage environment variable notes in a Bitwarden folder",
+	Long: `Manage environment variable Secure Notes in the specified Bitwarden folder.
 
 Each Secure Note must have a custom field "pkv_type" set to "env" to be recognized.
-Notes without this field will be skipped with a warning.
-
 The note content should contain KEY=VALUE pairs (one per line).
 Supports: KEY=VALUE, export KEY=VALUE, # comments, quoted values.
 
@@ -28,21 +28,53 @@ On Windows, variables are set as persistent User environment variables.
 On Linux/macOS, variables are written to ~/.pkv/env.sh and sourced from shell rc files.
 
 Examples:
-  pkv env github          Deploy env vars from the "github" folder
-  pkv env github clean    Remove deployed env vars from "github"`,
-	Args: cobra.RangeArgs(1, 2),
-	RunE: runEnv,
+  pkv env github              Deploy env vars from the "github" folder
+  pkv env github list         List env notes in the folder
+  pkv env github add --name "tokens" --file ./.env   Add env note from file
+  pkv env github add --name "secrets"                 Add env note via editor
+  pkv env github edit <name-or-id>   Edit an env note in $EDITOR
+  pkv env github remove <id>        Remove an env note from Bitwarden
+  pkv env github clean              Remove deployed env vars from "github"`,
+	Args:               cobra.MinimumNArgs(1),
+	RunE:               runEnv,
+	DisableFlagParsing: false,
 }
+
+var (
+	envAddNameFlag string
+	envAddFileFlag string
+)
 
 func init() {
 	rootCmd.AddCommand(envCmd)
+	envCmd.Flags().StringVar(&envAddNameFlag, "name", "", "Note name in Bitwarden (used with 'add')")
+	envCmd.Flags().StringVar(&envAddFileFlag, "file", "", "File path to read content from (used with 'add')")
 }
 
 func runEnv(_ *cobra.Command, args []string) error {
 	folder := args[0]
 
-	if len(args) == 2 {
-		return handleCleanCommand(args[1], func() error { return runEnvClean(folder) })
+	if len(args) >= 2 {
+		switch args[1] {
+		case "clean":
+			return runEnvClean(folder)
+		case "list":
+			return runEnvList(folder)
+		case "add":
+			return runEnvAdd(folder)
+		case "remove":
+			if len(args) < 3 {
+				return fmt.Errorf("usage: pkv env <folder> remove <id> [id2] [id3]...")
+			}
+			return runEnvRemove(folder, args[2:])
+		case "edit":
+			if len(args) < 3 {
+				return fmt.Errorf("usage: pkv env <folder> edit <name-or-id>")
+			}
+			return runEnvEdit(folder, args[2])
+		default:
+			return fmt.Errorf("unknown option: %s (expected 'add', 'list', 'remove', 'edit', or 'clean')", args[1])
+		}
 	}
 
 	return runEnvDeploy(folder)
@@ -143,6 +175,208 @@ func runEnvClean(folder string) error {
 	}
 
 	fmt.Printf("Cleaned %d env group(s) for '%s'. Restart terminal to apply.\n", cleaned, folder)
+	return nil
+}
+
+func runEnvList(folder string) error {
+	client := bw.NewClient()
+
+	fmt.Println("Authenticating with Bitwarden...")
+	session, err := client.EnsureUnlocked()
+	if err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	fmt.Println("Syncing vault...")
+	if err := client.Sync(session); err != nil {
+		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	fmt.Printf("Looking up folder '%s'...\n", folder)
+	folderID, err := client.GetFolderID(session, folder)
+	if err != nil {
+		return fmt.Errorf("folder lookup failed: %w", err)
+	}
+
+	items, err := client.ListItems(session, folderID)
+	if err != nil {
+		return fmt.Errorf("list items failed: %w", err)
+	}
+
+	envNotes, _ := bw.FilterEnvNotes(items)
+	securenote.PrintList(envNotes, folder, "env notes")
+	return nil
+}
+
+func runEnvAdd(folder string) error {
+	name := envAddNameFlag
+	if name == "" {
+		return fmt.Errorf("--name is required: pkv env <folder> add --name <name> [--file <path>]")
+	}
+
+	var content string
+	if envAddFileFlag != "" {
+		// Read from file
+		filePath := envAddFileFlag
+		if strings.HasPrefix(filePath, "~") {
+			home, _ := os.UserHomeDir()
+			filePath = filepath.Join(home, filePath[1:])
+		}
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return fmt.Errorf("read file: %w", err)
+		}
+		content = string(data)
+	} else {
+		// Open editor
+		fmt.Println("Opening editor to write env content (KEY=VALUE format)...")
+		edited, err := securenote.OpenEditor("")
+		if err != nil {
+			return fmt.Errorf("editor: %w", err)
+		}
+		if strings.TrimSpace(edited) == "" {
+			fmt.Println("Empty content, cancelled.")
+			return nil
+		}
+		content = edited
+	}
+
+	client := bw.NewClient()
+
+	fmt.Println("Authenticating with Bitwarden...")
+	session, err := client.EnsureUnlocked()
+	if err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	fmt.Println("Syncing vault...")
+	if err := client.Sync(session); err != nil {
+		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	fmt.Printf("Looking up folder '%s'...\n", folder)
+	folderID, err := client.GetFolderID(session, folder)
+	if err != nil {
+		return fmt.Errorf("folder lookup failed: %w", err)
+	}
+
+	fmt.Printf("Creating env note '%s'...\n", name)
+	itemID, err := securenote.Add(client, session, folderID, name, content, true)
+	if err != nil {
+		return fmt.Errorf("create env note failed: %w", err)
+	}
+
+	fmt.Printf("Env note '%s' created with pkv_type=env (ID: %s)\n", name, itemID)
+	return nil
+}
+
+func runEnvRemove(folder string, ids []string) error {
+	client := bw.NewClient()
+
+	fmt.Println("Authenticating with Bitwarden...")
+	session, err := client.EnsureUnlocked()
+	if err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	fmt.Println("Syncing vault...")
+	if err := client.Sync(session); err != nil {
+		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	fmt.Printf("Looking up folder '%s'...\n", folder)
+	folderID, err := client.GetFolderID(session, folder)
+	if err != nil {
+		return fmt.Errorf("folder lookup failed: %w", err)
+	}
+
+	items, err := client.ListItems(session, folderID)
+	if err != nil {
+		return fmt.Errorf("list items failed: %w", err)
+	}
+
+	envNotes, _ := bw.FilterEnvNotes(items)
+
+	// Build lookup map
+	noteMap := make(map[string]string) // id -> name
+	for _, n := range envNotes {
+		noteMap[n.ID] = n.Name
+	}
+
+	st, err := state.Load()
+	if err != nil {
+		return fmt.Errorf("load state failed: %w", err)
+	}
+
+	fmt.Printf("Removing env notes from folder '%s'...\n", folder)
+	removed := 0
+	for _, id := range ids {
+		name, found := noteMap[id]
+		if !found {
+			fmt.Fprintf(os.Stderr, "  Env note '%s' not found in folder '%s'\n", id, folder)
+			continue
+		}
+
+		if err := client.DeleteItem(session, id); err != nil {
+			fmt.Fprintf(os.Stderr, "  Failed to remove '%s' (%s): %v\n", name, id, err)
+			continue
+		}
+
+		st.RemoveEnvByItemID(id)
+		fmt.Printf("  Removed '%s' (%s)\n", name, id)
+		removed++
+	}
+
+	if err := st.Save(); err != nil {
+		return fmt.Errorf("save state failed: %w", err)
+	}
+
+	fmt.Printf("Removed %d env note(s).\n", removed)
+	return nil
+}
+
+func runEnvEdit(folder string, nameOrID string) error {
+	client := bw.NewClient()
+
+	fmt.Println("Authenticating with Bitwarden...")
+	session, err := client.EnsureUnlocked()
+	if err != nil {
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	fmt.Println("Syncing vault...")
+	if err := client.Sync(session); err != nil {
+		return fmt.Errorf("sync failed: %w", err)
+	}
+
+	fmt.Printf("Looking up folder '%s'...\n", folder)
+	folderID, err := client.GetFolderID(session, folder)
+	if err != nil {
+		return fmt.Errorf("folder lookup failed: %w", err)
+	}
+
+	items, err := client.ListItems(session, folderID)
+	if err != nil {
+		return fmt.Errorf("list items failed: %w", err)
+	}
+
+	envNotes, _ := bw.FilterEnvNotes(items)
+	item, err := securenote.ResolveItem(envNotes, nameOrID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Editing '%s'...\n", item.Name)
+	updated, err := securenote.Edit(client, session, item)
+	if err != nil {
+		return fmt.Errorf("edit failed: %w", err)
+	}
+
+	if !updated {
+		fmt.Println("No changes made.")
+	} else {
+		fmt.Printf("Env note '%s' updated.\n", item.Name)
+	}
 	return nil
 }
 
