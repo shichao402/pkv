@@ -15,12 +15,17 @@ type EnvVar struct {
 	Value string
 }
 
+// ConfirmFunc is called to ask the user whether to overwrite conflicting keys.
+// It receives the list of conflicts and returns true if the user wants to overwrite.
+type ConfirmFunc func(conflicts []ConflictInfo) (bool, error)
+
 type Deployer struct {
-	state *state.State
+	state   *state.State
+	confirm ConfirmFunc
 }
 
-func NewDeployer(st *state.State) *Deployer {
-	return &Deployer{state: st}
+func NewDeployer(st *state.State, confirm ConfirmFunc) *Deployer {
+	return &Deployer{state: st, confirm: confirm}
 }
 
 // ParseEnvVars parses KEY=VALUE lines from note content.
@@ -77,7 +82,8 @@ func stripQuotes(value string, lineNum int) string {
 }
 
 // Deploy parses a Secure Note as KEY=VALUE pairs and sets them as persistent environment variables.
-// If some variables fail to set, it will try to continue with others and report partial failures.
+// It detects key conflicts with other deployed folders and asks the user for confirmation.
+// A snapshot of all deployed key-value pairs is saved for later restoration on clean.
 func (d *Deployer) Deploy(item types.Item) ([]EnvVar, error) {
 	if item.Notes == "" {
 		return nil, fmt.Errorf("item '%s' has no content", item.Name)
@@ -88,9 +94,33 @@ func (d *Deployer) Deploy(item types.Item) ([]EnvVar, error) {
 		return nil, fmt.Errorf("parse '%s': %w", item.Name, err)
 	}
 
+	// Check for conflicts with other deployed folders
+	conflicts, err := DetectConflicts(vars, item.ID)
+	if err != nil {
+		return nil, fmt.Errorf("conflict detection: %w", err)
+	}
+
+	// Build set of keys to skip (user declined overwrite)
+	skipKeys := make(map[string]bool)
+	if len(conflicts) > 0 {
+		overwrite, err := d.confirm(conflicts)
+		if err != nil {
+			return nil, fmt.Errorf("confirm overwrite: %w", err)
+		}
+		if !overwrite {
+			for _, c := range conflicts {
+				skipKeys[c.Key] = true
+			}
+		}
+	}
+
 	var failedVars []string
 	var successVars []EnvVar
 	for _, v := range vars {
+		if skipKeys[v.Key] {
+			fmt.Printf("    - %s (skipped, owned by '%s')\n", v.Key, conflictOwner(conflicts, v.Key))
+			continue
+		}
 		if err := setPersistentEnv(v.Key, v.Value); err != nil {
 			failedVars = append(failedVars, fmt.Sprintf("%s (%v)", v.Key, err))
 			continue
@@ -99,7 +129,22 @@ func (d *Deployer) Deploy(item types.Item) ([]EnvVar, error) {
 		successVars = append(successVars, v)
 	}
 
-	// Only record successfully set variables
+	// Save snapshot with all successfully set vars (for restoration on clean)
+	snapVars := make(map[string]string, len(successVars))
+	for _, v := range successVars {
+		snapVars[v.Key] = v.Value
+	}
+	if len(snapVars) > 0 {
+		if err := SaveSnapshot(Snapshot{
+			ItemID: item.ID,
+			Name:   item.Name,
+			Vars:   snapVars,
+		}); err != nil {
+			return successVars, fmt.Errorf("save snapshot: %w", err)
+		}
+	}
+
+	// Record successfully set variables in state
 	keys := make([]string, len(successVars))
 	for i, v := range successVars {
 		keys[i] = v.Key
@@ -124,15 +169,36 @@ func (d *Deployer) Deploy(item types.Item) ([]EnvVar, error) {
 }
 
 // Remove unsets previously deployed environment variables.
-// Attempts to remove all variables and reports any failures at the end.
+// For each key, it checks whether another deployed folder also has the same key.
+// If so, the value is restored from that folder's snapshot instead of being deleted.
 func (d *Deployer) Remove(entry state.EnvEntry) error {
+	orderedIDs := d.state.EnvItemIDsByRecency()
+
 	var failedKeys []string
 	for _, key := range entry.Keys {
-		if err := removePersistentEnv(key); err != nil {
-			failedKeys = append(failedKeys, fmt.Sprintf("%s (%v)", key, err))
-			continue
+		// Check if another folder's snapshot has a value to restore
+		restoredVal, restoredFrom, found := FindRestorationValue(key, entry.ItemID, orderedIDs)
+		if found {
+			// Restore the value from the other folder
+			if err := setPersistentEnv(key, restoredVal); err != nil {
+				failedKeys = append(failedKeys, fmt.Sprintf("%s (%v)", key, err))
+				continue
+			}
+			_ = os.Setenv(key, restoredVal)
+			fmt.Printf("    ~ %s (restored from '%s')\n", key, restoredFrom)
+		} else {
+			// No other folder uses this key, remove it
+			if err := removePersistentEnv(key); err != nil {
+				failedKeys = append(failedKeys, fmt.Sprintf("%s (%v)", key, err))
+				continue
+			}
+			_ = os.Unsetenv(key)
 		}
-		_ = os.Unsetenv(key)
+	}
+
+	// Delete the snapshot file for this item
+	if err := DeleteSnapshot(entry.ItemID); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: failed to delete snapshot for '%s': %v\n", entry.Name, err)
 	}
 
 	if len(failedKeys) > 0 {
@@ -142,4 +208,14 @@ func (d *Deployer) Remove(entry state.EnvEntry) error {
 		return fmt.Errorf("partial failure removing variables: %s (removed %d/%d)", strings.Join(failedKeys, "; "), len(entry.Keys)-len(failedKeys), len(entry.Keys))
 	}
 	return nil
+}
+
+// conflictOwner returns the owner name for a conflicting key.
+func conflictOwner(conflicts []ConflictInfo, key string) string {
+	for _, c := range conflicts {
+		if c.Key == key {
+			return c.ExistingName
+		}
+	}
+	return "unknown"
 }

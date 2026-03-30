@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -41,7 +42,7 @@ func runEnv(_ *cobra.Command, args []string) error {
 	folder := args[0]
 
 	if len(args) == 2 {
-		return handleCleanCommand(args[1], runEnvClean)
+		return handleCleanCommand(args[1], func() error { return runEnvClean(folder) })
 	}
 
 	return runEnvDeploy(folder)
@@ -90,7 +91,7 @@ func runEnvDeploy(folder string) error {
 		return fmt.Errorf("load state failed: %w", err)
 	}
 
-	deployer := env.NewDeployer(st)
+	deployer := env.NewDeployer(st, confirmEnvOverwrite)
 	totalVars := 0
 	for _, note := range notes {
 		fmt.Printf("  Deploying '%s'...\n", note.Name)
@@ -100,7 +101,7 @@ func runEnvDeploy(folder string) error {
 			continue
 		}
 		for _, v := range vars {
-			fmt.Printf("    ✓ %s\n", v.Key)
+			fmt.Printf("    + %s\n", v.Key)
 		}
 		totalVars += len(vars)
 	}
@@ -113,20 +114,21 @@ func runEnvDeploy(folder string) error {
 	return nil
 }
 
-func runEnvClean() error {
+func runEnvClean(folder string) error {
 	st, err := state.Load()
 	if err != nil {
 		return fmt.Errorf("load state failed: %w", err)
 	}
 
-	if len(st.Envs) == 0 {
-		fmt.Println("No environment variables to clean.")
+	entries := st.FindEnvsByName(folder)
+	if len(entries) == 0 {
+		fmt.Printf("No environment variables found for folder '%s'.\n", folder)
 		return nil
 	}
 
-	deployer := env.NewDeployer(st)
+	deployer := env.NewDeployer(st, nil)
 	cleaned := 0
-	for _, entry := range st.Envs {
+	for _, entry := range entries {
 		fmt.Printf("  Removing '%s' (%s)...\n", entry.Name, strings.Join(entry.Keys, ", "))
 		if err := deployer.Remove(entry); err != nil {
 			fmt.Fprintf(os.Stderr, "  Failed to remove '%s': %v\n", entry.Name, err)
@@ -135,11 +137,28 @@ func runEnvClean() error {
 		cleaned++
 	}
 
-	st.Envs = nil
+	st.RemoveEnvsByName(folder)
 	if err := st.Save(); err != nil {
 		return fmt.Errorf("save state failed: %w", err)
 	}
 
-	fmt.Printf("Cleaned %d env group(s). Restart terminal to apply.\n", cleaned)
+	fmt.Printf("Cleaned %d env group(s) for '%s'. Restart terminal to apply.\n", cleaned, folder)
 	return nil
+}
+
+// confirmEnvOverwrite asks the user whether to overwrite conflicting keys.
+func confirmEnvOverwrite(conflicts []env.ConflictInfo) (bool, error) {
+	fmt.Println("  Conflicting environment variables detected:")
+	for _, c := range conflicts {
+		fmt.Printf("    %s: currently set by '%s'\n", c.Key, c.ExistingName)
+	}
+	fmt.Print("  Overwrite these variables? (y/N): ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, err := reader.ReadString('\n')
+	if err != nil {
+		return false, err
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "y" || answer == "yes", nil
 }

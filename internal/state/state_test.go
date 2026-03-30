@@ -218,3 +218,176 @@ func TestAddNote(t *testing.T) {
 		}
 	})
 }
+
+func TestFindEnvsByName(t *testing.T) {
+	t.Run("match single entry", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "1", Name: "github1", Keys: []string{"A"}},
+				{ItemID: "2", Name: "github2", Keys: []string{"B"}},
+			},
+		}
+		matched := s.FindEnvsByName("github1")
+		if len(matched) != 1 {
+			t.Fatalf("got %d, want 1", len(matched))
+		}
+		if matched[0].ItemID != "1" {
+			t.Errorf("ItemID = %q, want %q", matched[0].ItemID, "1")
+		}
+	})
+
+	t.Run("match multiple entries with same name", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "1", Name: "github1", Keys: []string{"A"}},
+				{ItemID: "2", Name: "github1", Keys: []string{"B"}},
+				{ItemID: "3", Name: "github2", Keys: []string{"C"}},
+			},
+		}
+		matched := s.FindEnvsByName("github1")
+		if len(matched) != 2 {
+			t.Fatalf("got %d, want 2", len(matched))
+		}
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "1", Name: "github1", Keys: []string{"A"}},
+			},
+		}
+		matched := s.FindEnvsByName("nonexistent")
+		if len(matched) != 0 {
+			t.Errorf("got %d, want 0", len(matched))
+		}
+	})
+
+	t.Run("empty state", func(t *testing.T) {
+		s := &State{}
+		matched := s.FindEnvsByName("anything")
+		if len(matched) != 0 {
+			t.Errorf("got %d, want 0", len(matched))
+		}
+	})
+}
+
+func TestRemoveEnvsByName(t *testing.T) {
+	t.Run("remove matching entries", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "1", Name: "github1", Keys: []string{"A"}},
+				{ItemID: "2", Name: "github2", Keys: []string{"B"}},
+				{ItemID: "3", Name: "github1", Keys: []string{"C"}},
+			},
+		}
+		s.RemoveEnvsByName("github1")
+
+		if len(s.Envs) != 1 {
+			t.Fatalf("got %d entries, want 1", len(s.Envs))
+		}
+		if s.Envs[0].ItemID != "2" {
+			t.Errorf("remaining ItemID = %q, want %q", s.Envs[0].ItemID, "2")
+		}
+	})
+
+	t.Run("remove nonexistent name is no-op", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "1", Name: "github1", Keys: []string{"A"}},
+			},
+		}
+		s.RemoveEnvsByName("nonexistent")
+
+		if len(s.Envs) != 1 {
+			t.Fatalf("got %d entries, want 1", len(s.Envs))
+		}
+	})
+
+	t.Run("remove all entries", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "1", Name: "github1", Keys: []string{"A"}},
+				{ItemID: "2", Name: "github1", Keys: []string{"B"}},
+			},
+		}
+		s.RemoveEnvsByName("github1")
+
+		if len(s.Envs) != 0 {
+			t.Errorf("got %d entries, want 0", len(s.Envs))
+		}
+	})
+
+	t.Run("empty state", func(t *testing.T) {
+		s := &State{}
+		s.RemoveEnvsByName("anything")
+		if s.Envs != nil {
+			t.Errorf("Envs = %v, want nil", s.Envs)
+		}
+	})
+}
+
+func TestEnvItemIDsByRecency(t *testing.T) {
+	t.Run("sorted by SetAt descending", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "oldest", SetAt: "2025-01-01T00:00:00Z"},
+				{ItemID: "newest", SetAt: "2025-03-01T00:00:00Z"},
+				{ItemID: "middle", SetAt: "2025-02-01T00:00:00Z"},
+			},
+		}
+		ids := s.EnvItemIDsByRecency()
+
+		if len(ids) != 3 {
+			t.Fatalf("got %d IDs, want 3", len(ids))
+		}
+		if ids[0] != "newest" {
+			t.Errorf("ids[0] = %q, want %q", ids[0], "newest")
+		}
+		if ids[1] != "middle" {
+			t.Errorf("ids[1] = %q, want %q", ids[1], "middle")
+		}
+		if ids[2] != "oldest" {
+			t.Errorf("ids[2] = %q, want %q", ids[2], "oldest")
+		}
+	})
+
+	t.Run("single entry", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "only", SetAt: "2025-01-01T00:00:00Z"},
+			},
+		}
+		ids := s.EnvItemIDsByRecency()
+
+		if len(ids) != 1 || ids[0] != "only" {
+			t.Errorf("got %v, want [only]", ids)
+		}
+	})
+
+	t.Run("empty state", func(t *testing.T) {
+		s := &State{}
+		ids := s.EnvItemIDsByRecency()
+
+		if len(ids) != 0 {
+			t.Errorf("got %v, want empty", ids)
+		}
+	})
+
+	t.Run("same timestamp preserves order", func(t *testing.T) {
+		s := &State{
+			Envs: []EnvEntry{
+				{ItemID: "a", SetAt: "2025-01-01T00:00:00Z"},
+				{ItemID: "b", SetAt: "2025-01-01T00:00:00Z"},
+			},
+		}
+		ids := s.EnvItemIDsByRecency()
+
+		if len(ids) != 2 {
+			t.Fatalf("got %d IDs, want 2", len(ids))
+		}
+		// Insertion sort is stable, so original order preserved for equal keys
+		if ids[0] != "a" || ids[1] != "b" {
+			t.Errorf("got %v, want [a b] (stable order)", ids)
+		}
+	})
+}

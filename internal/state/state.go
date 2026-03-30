@@ -147,6 +147,52 @@ func (s *State) AddEnv(entry EnvEntry) {
 	s.Envs = append(s.Envs, entry)
 }
 
+// FindEnvsByName returns all env entries matching the given folder/item name.
+func (s *State) FindEnvsByName(name string) []EnvEntry {
+	var matched []EnvEntry
+	for _, e := range s.Envs {
+		if e.Name == name {
+			matched = append(matched, e)
+		}
+	}
+	return matched
+}
+
+// RemoveEnvsByName removes all env entries matching the given folder/item name.
+func (s *State) RemoveEnvsByName(name string) {
+	var kept []EnvEntry
+	for _, e := range s.Envs {
+		if e.Name != name {
+			kept = append(kept, e)
+		}
+	}
+	s.Envs = kept
+}
+
+// EnvItemIDsByRecency returns item IDs from env entries sorted by SetAt descending (most recent first).
+func (s *State) EnvItemIDsByRecency() []string {
+	// Already stored in append order; sort by SetAt descending
+	type ts struct {
+		id    string
+		setAt string
+	}
+	entries := make([]ts, 0, len(s.Envs))
+	for _, e := range s.Envs {
+		entries = append(entries, ts{id: e.ItemID, setAt: e.SetAt})
+	}
+	// Simple insertion sort (small list)
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && entries[j].setAt > entries[j-1].setAt; j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+	ids := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = e.id
+	}
+	return ids
+}
+
 // AddNote records a synced note.
 func (s *State) AddNote(entry NoteEntry) {
 	entry.SyncedAt = time.Now().Format(time.RFC3339)
