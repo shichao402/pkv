@@ -12,6 +12,7 @@ const stateFileName = ".pkv/state.json"
 type SSHKeyEntry struct {
 	ItemID      string   `json:"item_id"`
 	KeyName     string   `json:"key_name"`
+	Folder      string   `json:"folder,omitempty"`
 	KeyFile     string   `json:"key_file"`
 	PubFile     string   `json:"pub_file"`
 	Hosts       []string `json:"hosts"`
@@ -22,6 +23,7 @@ type SSHKeyEntry struct {
 
 type NoteEntry struct {
 	ItemID   string `json:"item_id"`
+	Folder   string `json:"folder,omitempty"`
 	FileName string `json:"file_name"`
 	FilePath string `json:"file_path"`
 	SyncedAt string `json:"synced_at"`
@@ -137,6 +139,33 @@ func (s *State) AddSSHKey(entry SSHKeyEntry) {
 	s.SSHKeys = append(s.SSHKeys, entry)
 }
 
+// IsDeployed reports whether this SSH key entry represents a locally deployed key.
+func (e SSHKeyEntry) IsDeployed() bool {
+	return e.KeyFile != ""
+}
+
+// FindDeployedSSHKeysByFolder returns deployed SSH keys for the given folder.
+func (s *State) FindDeployedSSHKeysByFolder(folder string) []SSHKeyEntry {
+	var matched []SSHKeyEntry
+	for _, e := range s.SSHKeys {
+		if e.IsDeployed() && e.Folder == folder {
+			matched = append(matched, e)
+		}
+	}
+	return matched
+}
+
+// RemoveDeployedSSHKeysByFolder removes deployed SSH key entries for the given folder.
+func (s *State) RemoveDeployedSSHKeysByFolder(folder string) {
+	var kept []SSHKeyEntry
+	for _, e := range s.SSHKeys {
+		if !e.IsDeployed() || e.Folder != folder {
+			kept = append(kept, e)
+		}
+	}
+	s.SSHKeys = kept
+}
+
 // AddEnv records deployed environment variables.
 func (s *State) AddEnv(entry EnvEntry) {
 	entry.SetAt = time.Now().Format(time.RFC3339)
@@ -193,6 +222,22 @@ func (s *State) EnvItemIDsByRecency() []string {
 		ids[i] = e.id
 	}
 	return ids
+}
+
+// IsSynced reports whether this note entry represents a locally synced file.
+func (e NoteEntry) IsSynced() bool {
+	return e.FilePath != ""
+}
+
+// FindSyncedNotesByFolder returns synced note entries for the given folder.
+func (s *State) FindSyncedNotesByFolder(folder string) []NoteEntry {
+	var matched []NoteEntry
+	for _, e := range s.Notes {
+		if e.IsSynced() && e.Folder == folder {
+			matched = append(matched, e)
+		}
+	}
+	return matched
 }
 
 // AddNote records a synced note.

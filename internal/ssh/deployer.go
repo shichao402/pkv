@@ -15,16 +15,19 @@ type Deployer struct {
 	sshDir string
 }
 
-func NewDeployer(st *state.State) *Deployer {
-	home, _ := os.UserHomeDir()
+func NewDeployer(st *state.State) (*Deployer, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory: %w", err)
+	}
 	return &Deployer{
 		state:  st,
 		sshDir: filepath.Join(home, ".ssh"),
-	}
+	}, nil
 }
 
 // Deploy writes an SSH key to ~/.ssh/ and updates ~/.ssh/config and ~/.ssh/known_hosts.
-func (d *Deployer) Deploy(item types.Item) error {
+func (d *Deployer) Deploy(item types.Item, folder string) error {
 	if item.SSHKey == nil {
 		return fmt.Errorf("item '%s' has no SSH key data", item.Name)
 	}
@@ -73,6 +76,7 @@ func (d *Deployer) Deploy(item types.Item) error {
 	d.state.AddSSHKey(state.SSHKeyEntry{
 		ItemID:  item.ID,
 		KeyName: keyName,
+		Folder:  folder,
 		KeyFile: keyFile,
 		PubFile: pubFile,
 		Hosts:   hosts,

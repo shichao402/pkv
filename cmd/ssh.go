@@ -3,13 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/shichao402/pkv/internal/bw"
 	"github.com/shichao402/pkv/internal/key"
+	"github.com/shichao402/pkv/internal/pathutil"
 	"github.com/shichao402/pkv/internal/ssh"
 	"github.com/shichao402/pkv/internal/state"
 )
@@ -104,12 +104,15 @@ func runSSHDeploy(folder string) error {
 		return fmt.Errorf("load state failed: %w", err)
 	}
 
-	deployer := ssh.NewDeployer(st)
+	deployer, err := ssh.NewDeployer(st)
+	if err != nil {
+		return fmt.Errorf("create ssh deployer failed: %w", err)
+	}
 	deployed := 0
 	var allHosts []string
 	for _, key := range sshKeys {
 		fmt.Printf("  Deploying '%s'...\n", key.Name)
-		if err := deployer.Deploy(key); err != nil {
+		if err := deployer.Deploy(key, folder); err != nil {
 			fmt.Fprintf(os.Stderr, "  Failed to deploy '%s': %v\n", key.Name, err)
 			continue
 		}
@@ -139,35 +142,51 @@ func runSSHClean(folder string) error {
 		return fmt.Errorf("load state failed: %w", err)
 	}
 
-	// Filter keys belonging to this folder (by key name prefix or all if not tracked by folder)
-	if len(st.SSHKeys) == 0 {
-		fmt.Println("No SSH keys to clean.")
+	entries := st.FindDeployedSSHKeysByFolder(folder)
+	if len(entries) == 0 {
+		for _, entry := range st.SSHKeys {
+			if entry.IsDeployed() && entry.Folder == "" {
+				fmt.Printf("No SSH keys found for folder '%s'. Existing deployed keys were created without folder metadata; redeploy them once to enable folder-scoped clean.\n", folder)
+				return nil
+			}
+		}
+		fmt.Printf("No SSH keys found for folder '%s'.\n", folder)
 		return nil
 	}
 
-	deployer := ssh.NewDeployer(st)
+	deployer, err := ssh.NewDeployer(st)
+	if err != nil {
+		return fmt.Errorf("create ssh deployer failed: %w", err)
+	}
 	cleaned := 0
-	for _, entry := range st.SSHKeys {
+	for _, entry := range entries {
 		fmt.Printf("  Removing '%s'...\n", entry.KeyName)
 		if err := deployer.Remove(entry); err != nil {
 			fmt.Fprintf(os.Stderr, "  Failed to remove '%s': %v\n", entry.KeyName, err)
 			continue
 		}
+		st.RemoveStoredSSHKey(entry.ItemID)
 		cleaned++
 	}
 
-	// Remove PKV managed entries from known_hosts
-	fmt.Println("  Cleaning known_hosts...")
-	if err := deployer.RemoveAllKnownHosts(); err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
+	remainingHosts := collectDeployedSSHHosts(st.SSHKeys)
+	if len(remainingHosts) == 0 {
+		fmt.Println("  Cleaning known_hosts...")
+		if err := deployer.RemoveAllKnownHosts(); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
+		}
+	} else {
+		fmt.Println("  Rebuilding known_hosts...")
+		if err := deployer.DeployKnownHosts(remainingHosts); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: known_hosts rebuild failed: %v\n", err)
+		}
 	}
 
-	st.SSHKeys = nil
 	if err := st.Save(); err != nil {
 		return fmt.Errorf("save state failed: %w", err)
 	}
 
-	fmt.Printf("Cleaned %d SSH key(s).\n", cleaned)
+	fmt.Printf("Cleaned %d SSH key(s) for folder '%s'.\n", cleaned, folder)
 	return nil
 }
 
@@ -180,10 +199,11 @@ func runSSHAdd(folder string) error {
 	}
 
 	// Expand ~ in --priv path
-	if strings.HasPrefix(cfg.PrivatePath, "~") {
-		home, _ := os.UserHomeDir()
-		cfg.PrivatePath = filepath.Join(home, cfg.PrivatePath[1:])
+	expandedPath, err := pathutil.ExpandTilde(cfg.PrivatePath)
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
 	}
+	cfg.PrivatePath = expandedPath
 
 	fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
 	if err := key.InteractiveInput(cfg); err != nil {
@@ -404,4 +424,15 @@ func formatHosts(hosts []string, maxHosts int) string {
 		return strings.Join(hosts, ", ")
 	}
 	return strings.Join(hosts[:maxHosts], ", ") + fmt.Sprintf(" (+%d)", len(hosts)-maxHosts)
+}
+
+func collectDeployedSSHHosts(entries []state.SSHKeyEntry) []string {
+	var hosts []string
+	for _, entry := range entries {
+		if !entry.IsDeployed() || len(entry.Hosts) == 0 {
+			continue
+		}
+		hosts = append(hosts, entry.Hosts...)
+	}
+	return hosts
 }

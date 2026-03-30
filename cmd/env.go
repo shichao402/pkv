@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/shichao402/pkv/internal/bw"
 	"github.com/shichao402/pkv/internal/env"
+	"github.com/shichao402/pkv/internal/pathutil"
 	"github.com/shichao402/pkv/internal/securenote"
 	"github.com/shichao402/pkv/internal/state"
 )
@@ -218,9 +218,9 @@ func runEnvAdd(folder string) error {
 	if envAddFileFlag != "" {
 		// Read from file
 		filePath := envAddFileFlag
-		if strings.HasPrefix(filePath, "~") {
-			home, _ := os.UserHomeDir()
-			filePath = filepath.Join(home, filePath[1:])
+		filePath, err := pathutil.ExpandTilde(filePath)
+		if err != nil {
+			return fmt.Errorf("resolve home directory: %w", err)
 		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {

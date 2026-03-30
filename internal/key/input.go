@@ -4,8 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/shichao402/pkv/internal/pathutil"
 )
 
 // InputConfig holds flags from command-line for interactive prompting
@@ -30,9 +31,9 @@ func InteractiveInput(cfg *InputConfig) error {
 		cfg.PrivatePath = strings.TrimSpace(input)
 
 		// Expand ~ to home directory
-		if strings.HasPrefix(cfg.PrivatePath, "~") {
-			home, _ := os.UserHomeDir()
-			cfg.PrivatePath = filepath.Join(home, cfg.PrivatePath[1:])
+		cfg.PrivatePath, err = pathutil.ExpandTilde(cfg.PrivatePath)
+		if err != nil {
+			return fmt.Errorf("resolve home directory: %w", err)
 		}
 
 		// Verify file exists

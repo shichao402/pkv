@@ -3,13 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/shichao402/pkv/internal/bw"
 	"github.com/shichao402/pkv/internal/note"
+	"github.com/shichao402/pkv/internal/pathutil"
 	"github.com/shichao402/pkv/internal/securenote"
 	"github.com/shichao402/pkv/internal/state"
 )
@@ -120,7 +120,7 @@ func runNoteSync(folder string) error {
 	synced := 0
 	for _, n := range notes {
 		fmt.Printf("  Syncing '%s'...\n", n.Name)
-		if err := syncer.Sync(n, cwd); err != nil {
+		if err := syncer.Sync(n, cwd, folder); err != nil {
 			fmt.Fprintf(os.Stderr, "  Failed to sync '%s': %v\n", n.Name, err)
 			continue
 		}
@@ -141,28 +141,35 @@ func runNoteClean(folder string) error {
 		return fmt.Errorf("load state failed: %w", err)
 	}
 
-	if len(st.Notes) == 0 {
-		fmt.Println("No notes to clean.")
+	entries := st.FindSyncedNotesByFolder(folder)
+	if len(entries) == 0 {
+		for _, entry := range st.Notes {
+			if entry.IsSynced() && entry.Folder == "" {
+				fmt.Printf("No notes found for folder '%s'. Existing synced notes were created without folder metadata; sync them once again to enable folder-scoped clean.\n", folder)
+				return nil
+			}
+		}
+		fmt.Printf("No notes found for folder '%s'.\n", folder)
 		return nil
 	}
 
 	syncer := note.NewSyncer(st)
 	cleaned := 0
-	for _, entry := range st.Notes {
+	for _, entry := range entries {
 		fmt.Printf("  Removing '%s'...\n", entry.FileName)
 		if err := syncer.Remove(entry); err != nil {
 			fmt.Fprintf(os.Stderr, "  Failed to remove '%s': %v\n", entry.FileName, err)
 			continue
 		}
+		st.RemoveNote(entry.ItemID)
 		cleaned++
 	}
 
-	st.Notes = nil
 	if err := st.Save(); err != nil {
 		return fmt.Errorf("save state failed: %w", err)
 	}
 
-	fmt.Printf("Cleaned %d note(s).\n", cleaned)
+	fmt.Printf("Cleaned %d note(s) for folder '%s'.\n", cleaned, folder)
 	return nil
 }
 
@@ -206,9 +213,9 @@ func runNoteAdd(folder string) error {
 	if noteAddFileFlag != "" {
 		// Read from file
 		filePath := noteAddFileFlag
-		if strings.HasPrefix(filePath, "~") {
-			home, _ := os.UserHomeDir()
-			filePath = filepath.Join(home, filePath[1:])
+		filePath, err := pathutil.ExpandTilde(filePath)
+		if err != nil {
+			return fmt.Errorf("resolve home directory: %w", err)
 		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {

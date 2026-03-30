@@ -21,7 +21,7 @@ func TestSync(t *testing.T) {
 			Notes: "key: value\n",
 		}
 
-		if err := syncer.Sync(item, dir); err != nil {
+		if err := syncer.Sync(item, dir, "team-a"); err != nil {
 			t.Fatalf("Sync() error = %v", err)
 		}
 
@@ -46,7 +46,7 @@ func TestSync(t *testing.T) {
 			Notes: "",
 		}
 
-		err := syncer.Sync(item, dir)
+		err := syncer.Sync(item, dir, "team-a")
 		if err == nil {
 			t.Fatal("Sync() expected error for empty notes, got nil")
 		}
@@ -69,7 +69,7 @@ func TestSync(t *testing.T) {
 			Notes: "new content",
 		}
 
-		err := syncer.Sync(item, dir)
+		err := syncer.Sync(item, dir, "team-a")
 		if err == nil {
 			t.Fatal("Sync() expected error for existing file, got nil")
 		}
@@ -86,7 +86,7 @@ func TestSync(t *testing.T) {
 			Notes: "secret content",
 		}
 
-		if err := syncer.Sync(item, dir); err != nil {
+		if err := syncer.Sync(item, dir, "team-a"); err != nil {
 			t.Fatalf("Sync() error = %v", err)
 		}
 
@@ -112,7 +112,7 @@ func TestSync(t *testing.T) {
 			Notes: "tracked content",
 		}
 
-		if err := syncer.Sync(item, dir); err != nil {
+		if err := syncer.Sync(item, dir, "team-a"); err != nil {
 			t.Fatalf("Sync() error = %v", err)
 		}
 
@@ -122,6 +122,9 @@ func TestSync(t *testing.T) {
 		entry := st.Notes[0]
 		if entry.ItemID != "item1" {
 			t.Errorf("state ItemID = %q, want %q", entry.ItemID, "item1")
+		}
+		if entry.Folder != "team-a" {
+			t.Errorf("state Folder = %q, want %q", entry.Folder, "team-a")
 		}
 		if entry.FileName != "tracked.txt" {
 			t.Errorf("state FileName = %q, want %q", entry.FileName, "tracked.txt")

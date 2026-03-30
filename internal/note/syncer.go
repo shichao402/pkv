@@ -19,7 +19,7 @@ func NewSyncer(st *state.State) *Syncer {
 
 // Sync writes a note's content to a file in the target directory.
 // Returns an error if the file already exists (to prevent silent overwrite).
-func (s *Syncer) Sync(item types.Item, targetDir string) error {
+func (s *Syncer) Sync(item types.Item, targetDir, folder string) error {
 	if item.Notes == "" {
 		return fmt.Errorf("item '%s' has no note content", item.Name)
 	}
@@ -46,6 +46,7 @@ func (s *Syncer) Sync(item types.Item, targetDir string) error {
 
 	s.state.AddNote(state.NoteEntry{
 		ItemID:   item.ID,
+		Folder:   folder,
 		FileName: item.Name,
 		FilePath: absPath,
 	})

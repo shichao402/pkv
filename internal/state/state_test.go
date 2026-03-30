@@ -129,6 +129,46 @@ func TestAddSSHKey(t *testing.T) {
 	})
 }
 
+func TestFindDeployedSSHKeysByFolder(t *testing.T) {
+	s := &State{
+		SSHKeys: []SSHKeyEntry{
+			{ItemID: "deploy-a", Folder: "team-a", KeyFile: "/tmp/a"},
+			{ItemID: "stored-a", Folder: "team-a"},
+			{ItemID: "deploy-b", Folder: "team-b", KeyFile: "/tmp/b"},
+		},
+	}
+
+	matched := s.FindDeployedSSHKeysByFolder("team-a")
+	if len(matched) != 1 {
+		t.Fatalf("expected 1 deployed SSH key, got %d", len(matched))
+	}
+	if matched[0].ItemID != "deploy-a" {
+		t.Errorf("ItemID = %q, want %q", matched[0].ItemID, "deploy-a")
+	}
+}
+
+func TestRemoveDeployedSSHKeysByFolder(t *testing.T) {
+	s := &State{
+		SSHKeys: []SSHKeyEntry{
+			{ItemID: "deploy-a", Folder: "team-a", KeyFile: "/tmp/a"},
+			{ItemID: "stored-a", Folder: "team-a"},
+			{ItemID: "deploy-b", Folder: "team-b", KeyFile: "/tmp/b"},
+		},
+	}
+
+	s.RemoveDeployedSSHKeysByFolder("team-a")
+
+	if len(s.SSHKeys) != 2 {
+		t.Fatalf("expected 2 SSH key entries after removal, got %d", len(s.SSHKeys))
+	}
+	if s.SSHKeys[0].ItemID != "stored-a" {
+		t.Errorf("first remaining ItemID = %q, want %q", s.SSHKeys[0].ItemID, "stored-a")
+	}
+	if s.SSHKeys[1].ItemID != "deploy-b" {
+		t.Errorf("second remaining ItemID = %q, want %q", s.SSHKeys[1].ItemID, "deploy-b")
+	}
+}
+
 func TestAddEnv(t *testing.T) {
 	t.Run("add new entry", func(t *testing.T) {
 		s := &State{}
@@ -172,6 +212,24 @@ func TestAddEnv(t *testing.T) {
 			t.Errorf("SetAt = %v, expected between %v and %v", setAt, before, after)
 		}
 	})
+}
+
+func TestFindSyncedNotesByFolder(t *testing.T) {
+	s := &State{
+		Notes: []NoteEntry{
+			{ItemID: "note-a", Folder: "team-a", FilePath: "/tmp/a"},
+			{ItemID: "draft-a", Folder: "team-a"},
+			{ItemID: "note-b", Folder: "team-b", FilePath: "/tmp/b"},
+		},
+	}
+
+	matched := s.FindSyncedNotesByFolder("team-a")
+	if len(matched) != 1 {
+		t.Fatalf("expected 1 synced note, got %d", len(matched))
+	}
+	if matched[0].ItemID != "note-a" {
+		t.Errorf("ItemID = %q, want %q", matched[0].ItemID, "note-a")
+	}
 }
 
 func TestAddNote(t *testing.T) {
@@ -430,10 +488,10 @@ func TestRemoveNote(t *testing.T) {
 
 func TestRemoveEnvByItemID(t *testing.T) {
 	tests := []struct {
-		name       string
-		initialID  string
-		removeID   string
-		wantCount  int
+		name        string
+		initialID   string
+		removeID    string
+		wantCount   int
 		description string
 	}{
 		{
