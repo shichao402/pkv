@@ -10,12 +10,14 @@ import (
 const stateFileName = ".pkv/state.json"
 
 type SSHKeyEntry struct {
-	ItemID  string   `json:"item_id"`
-	KeyName string   `json:"key_name"`
-	KeyFile string   `json:"key_file"`
-	PubFile string   `json:"pub_file"`
-	Hosts   []string `json:"hosts"`
-	AddedAt string   `json:"added_at"`
+	ItemID      string   `json:"item_id"`
+	KeyName     string   `json:"key_name"`
+	KeyFile     string   `json:"key_file"`
+	PubFile     string   `json:"pub_file"`
+	Hosts       []string `json:"hosts"`
+	AddedAt     string   `json:"added_at"`
+	Fingerprint string   `json:"fingerprint,omitempty"` // SHA256 fingerprint of stored SSH key
+	StoredAt    string   `json:"stored_at,omitempty"`   // When key was stored in Bitwarden
 }
 
 type NoteEntry struct {
@@ -204,4 +206,43 @@ func (s *State) AddNote(entry NoteEntry) {
 		}
 	}
 	s.Notes = append(s.Notes, entry)
+}
+
+// AddStoredSSHKey records a key stored in Bitwarden.
+func (s *State) AddStoredSSHKey(itemID, keyName, fingerprint string) {
+	entry := SSHKeyEntry{
+		ItemID:      itemID,
+		KeyName:     keyName,
+		Fingerprint: fingerprint,
+		StoredAt:    time.Now().Format(time.RFC3339),
+	}
+	// Replace existing entry for same item
+	for i, e := range s.SSHKeys {
+		if e.ItemID == itemID {
+			s.SSHKeys[i] = entry
+			return
+		}
+	}
+	s.SSHKeys = append(s.SSHKeys, entry)
+}
+
+// FindStoredSSHKeyByFingerprint finds a stored SSH key by its fingerprint.
+func (s *State) FindStoredSSHKeyByFingerprint(fingerprint string) *SSHKeyEntry {
+	for i, e := range s.SSHKeys {
+		if e.Fingerprint == fingerprint {
+			return &s.SSHKeys[i]
+		}
+	}
+	return nil
+}
+
+// RemoveStoredSSHKey removes a stored SSH key by itemID.
+func (s *State) RemoveStoredSSHKey(itemID string) {
+	var kept []SSHKeyEntry
+	for _, e := range s.SSHKeys {
+		if e.ItemID != itemID {
+			kept = append(kept, e)
+		}
+	}
+	s.SSHKeys = kept
 }

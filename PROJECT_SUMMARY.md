@@ -216,6 +216,50 @@ pkv update
 3. 创建 tag 和 release
 4. 用户运行 `pkv update` 自动更新
 
+## 🏗 架构决策记录
+
+### Bitwarden CLI vs SDK 分析 (2026-03)
+
+#### 现状：PKV 完全依赖 Bitwarden CLI (`bw`)
+
+PKV 通过 `internal/bw/client.go` 封装 `bw` CLI，涉及以下命令：
+
+| 命令 | 用途 |
+|------|------|
+| `bw status` | 检查认证/锁定状态 |
+| `bw login` | 交互式登录 |
+| `bw unlock --raw` | 获取会话令牌 |
+| `bw sync` | 同步保险库数据 |
+| `bw list folders --search` | 查找文件夹 |
+| `bw list items --folderid` | 获取文件夹内项目 |
+| `bw create item` | 创建 SSH 密钥项 |
+
+#### 决策：保持 CLI 方案，不接入 SDK
+
+**原因：**
+
+1. **功能不匹配** — Bitwarden Go SDK (`github.com/bitwarden/sdk-go`) 仅支持 Secrets Manager，不支持 Password Manager。PKV 依赖的 SSH Key (type=5)、Secure Note (type=2)、Folder 操作在 SDK 中均不存在。
+2. **许可证风险** — Bitwarden SDK 采用专有许可证（2024年10月更改），限制用于 Bitwarden 产品之外的模块，PKV 使用可能违反条款。
+3. **编译复杂性** — SDK 依赖 CGO 和 C 编译环境，会显著增加跨平台编译难度，且引入 Rust FFI 依赖链。
+4. **CLI 是官方标准接口** — Bitwarden 未提供 Password Manager 的公开 SDK，CLI 是唯一稳定且开源的个人密码库接口。
+
+#### 改进方向（在 CLI 框架内优化）
+
+**1. 改进 CLI 进程管理**
+- 添加 `bw` CLI 版本检查，验证最低兼容版本
+- 增强错误消息，针对常见故障（网络超时、会话过期、CLI 版本不兼容）提供具体排查指引
+- 考虑检测 `bw` CLI 响应格式变化，提前发现兼容性问题
+
+**2. 会话优化**
+- 缓存 `bw sync` 结果，减少重复网络调用（同一会话内多次操作时复用）
+- 支持会话令牌复用：跨多条 `pkv` 命令共享 `BW_SESSION`，避免用户反复输入主密码
+- 考虑引入会话超时检测，在令牌失效前主动刷新
+
+**3. 离线模式支持**
+- 支持从上次 `bw sync` 的本地缓存数据中读取（`bw` CLI 本身有本地数据）
+- 在无网络时降级为只读模式，允许查看已部署的密钥状态
+- 实现延迟同步策略：先使用本地数据完成操作，有网络时再同步验证
+
 ## 🎉 项目完成状态
 
 | 组件 | 状态 |
