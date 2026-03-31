@@ -12,12 +12,39 @@ function Write-Warn  { param($Msg) Write-Host "[WARN] $Msg" -ForegroundColor Yel
 function Write-Err   { param($Msg) Write-Host "[ERROR] $Msg" -ForegroundColor Red; exit 1 }
 
 function Get-Arch {
-    $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    switch ($arch) {
-        "X64"   { return "amd64" }
-        "Arm64" { return "arm64" }
-        default { Write-Err "Unsupported architecture: $arch" }
+    try {
+        $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+        if ($arch) {
+            switch ($arch.ToString()) {
+                "X64"   { return "amd64" }
+                "Arm64" { return "arm64" }
+            }
+        }
+    } catch {}
+
+    $procArch = $env:PROCESSOR_ARCHITECTURE
+    switch ($procArch) {
+        "AMD64" { return "amd64" }
+        "ARM64" { return "arm64" }
+        "x86" {
+            $wow64Arch = $env:PROCESSOR_ARCHITEW6432
+            if ($wow64Arch) {
+                switch ($wow64Arch) {
+                    "AMD64" { return "amd64" }
+                    "ARM64" { return "arm64" }
+                }
+            }
+        }
     }
+
+    try {
+        $cpu = Get-WmiObject Win32_Processor | Select-Object -First 1
+        if ($cpu.AddressWidth -eq 64) {
+            return "amd64"
+        }
+    } catch {}
+
+    Write-Err "Unsupported architecture: PROCESSOR_ARCHITECTURE=$procArch"
 }
 
 function Get-LatestVersion {
