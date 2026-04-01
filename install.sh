@@ -53,26 +53,57 @@ get_latest_version() {
 download_binary() {
     ASSET_NAME="pkv_${OS}_${ARCH}"
     DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET_NAME}"
+    CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.sha256"
 
     info "Downloading ${ASSET_NAME}..."
 
     TMP_FILE=$(mktemp)
-    trap 'rm -f "$TMP_FILE"' EXIT
+    CHECKSUMS_FILE=$(mktemp)
+    trap 'rm -f "$TMP_FILE" "$CHECKSUMS_FILE"' EXIT
 
     if command -v curl &>/dev/null; then
+        curl -fsSL -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL" || error "Failed to download checksums file"
         curl -fsSL -o "$TMP_FILE" "$DOWNLOAD_URL" || error "Download failed. Check if release asset exists: ${ASSET_NAME}"
     else
+        wget -qO "$CHECKSUMS_FILE" "$CHECKSUMS_URL" || error "Failed to download checksums file"
         wget -qO "$TMP_FILE" "$DOWNLOAD_URL" || error "Download failed. Check if release asset exists: ${ASSET_NAME}"
     fi
 
     chmod +x "$TMP_FILE"
 }
 
+verify_checksum() {
+    info "Verifying checksum..."
+    EXPECTED_HASH=$(grep "${ASSET_NAME}" "$CHECKSUMS_FILE" | awk '{print $1}')
+    if [ -z "$EXPECTED_HASH" ]; then
+        error "No checksum found for ${ASSET_NAME}"
+    fi
+
+    if command -v sha256sum &>/dev/null; then
+        ACTUAL_HASH=$(sha256sum "$TMP_FILE" | awk '{print $1}')
+    elif command -v shasum &>/dev/null; then
+        ACTUAL_HASH=$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')
+    else
+        error "sha256sum or shasum is required for checksum verification"
+    fi
+
+    if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+        error "Checksum verification failed!\n  Expected: ${EXPECTED_HASH}\n  Actual:   ${ACTUAL_HASH}"
+    fi
+    info "Checksum verified."
+}
+
 install_binary() {
     mkdir -p "$INSTALL_DIR"
     mv "$TMP_FILE" "${INSTALL_DIR}/pkv"
     # Prevent EXIT trap from removing the installed file
-    trap - EXIT
+    trap 'rm -f "$CHECKSUMS_FILE"' EXIT
+
+    # Remove macOS quarantine attribute
+    if [ "$OS" = "darwin" ]; then
+        xattr -cr "${INSTALL_DIR}/pkv" 2>/dev/null || true
+    fi
+
     info "Installed pkv to ${INSTALL_DIR}/pkv"
 }
 
@@ -96,6 +127,7 @@ main() {
 
     get_latest_version
     download_binary
+    verify_checksum
     install_binary
     check_path
 

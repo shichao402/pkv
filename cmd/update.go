@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"runtime"
 	"strings"
@@ -51,12 +55,27 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	assetName := buildAssetName()
 	downloadURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", githubRepo, latestTag, assetName)
 
+	// Download checksum file
+	fmt.Println("Downloading checksums...")
+	checksumURL := fmt.Sprintf("https://github.com/%s/releases/download/%s/checksums.sha256", githubRepo, latestTag)
+	expectedHash, err := fetchExpectedHash(checksumURL, assetName)
+	if err != nil {
+		return fmt.Errorf("checksum fetch failed: %w", err)
+	}
+
 	fmt.Printf("Downloading %s...\n", assetName)
 	tmpFile, err := downloadAsset(downloadURL)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 	defer func() { _ = os.Remove(tmpFile) }()
+
+	// Verify checksum
+	fmt.Println("Verifying checksum...")
+	if err := verifyChecksum(tmpFile, expectedHash); err != nil {
+		return fmt.Errorf("checksum verification failed: %w", err)
+	}
+	fmt.Println("Checksum verified.")
 
 	execPath, err := os.Executable()
 	if err != nil {
@@ -67,6 +86,9 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	if err := replaceBinary(execPath, tmpFile); err != nil {
 		return fmt.Errorf("replace binary: %w", err)
 	}
+
+	// Remove macOS quarantine attribute
+	removeQuarantineAttr(execPath)
 
 	fmt.Printf("Updated to %s successfully.\n", latestTag)
 	return nil
@@ -143,6 +165,64 @@ func downloadAsset(url string) (string, error) {
 	}
 
 	return tmpFile.Name(), nil
+}
+
+// fetchExpectedHash downloads the checksums file and extracts the expected hash for the given asset.
+func fetchExpectedHash(checksumURL, assetName string) (string, error) {
+	resp, err := http.Get(checksumURL)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download checksums returned HTTP %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Format: "<hash>  <filename>" (two spaces)
+		parts := strings.Fields(line)
+		if len(parts) == 2 && parts[1] == assetName {
+			return parts[0], nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read checksums: %w", err)
+	}
+
+	return "", fmt.Errorf("no checksum found for %s", assetName)
+}
+
+// verifyChecksum computes the SHA256 of the file and compares it to the expected hash.
+func verifyChecksum(filePath, expectedHash string) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+
+	actualHash := hex.EncodeToString(h.Sum(nil))
+	if actualHash != expectedHash {
+		return fmt.Errorf("expected %s, got %s", expectedHash, actualHash)
+	}
+	return nil
+}
+
+// removeQuarantineAttr removes the macOS quarantine extended attribute.
+func removeQuarantineAttr(path string) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	if err := exec.Command("xattr", "-cr", path).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove quarantine attribute: %v\n", err)
+	}
 }
 
 func replaceBinary(targetPath, newBinaryPath string) error {
