@@ -90,12 +90,12 @@ func TestTranslateShellArgs(t *testing.T) {
 		{
 			name: "folder action-first get env",
 			args: []string{"prod", "get", "env"},
-			want: []string{"get", "prod", "env"},
+			wantErr: true,
 		},
 		{
 			name: "folder action-first remove note",
 			args: []string{"prod", "remove", "note", "id-1"},
-			want: []string{"remove", "prod", "note", "id-1"},
+			wantErr: true,
 		},
 		{
 			name: "explicit clean env",

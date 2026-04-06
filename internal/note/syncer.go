@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/shichao402/pkv/internal/bw/types"
 	"github.com/shichao402/pkv/internal/state"
@@ -81,7 +82,10 @@ func (s *Syncer) SyncFolder(items []types.Item, targetDir, folder string) (int, 
 }
 
 func (s *Syncer) createNew(item types.Item, targetDir, folder string) error {
-	filePath := filepath.Join(targetDir, item.Name)
+	filePath, err := resolveNotePath(targetDir, item.Name)
+	if err != nil {
+		return fmt.Errorf("prepare new note '%s': %w", item.Name, err)
+	}
 	if err := ensureWritableNewFile(filePath); err != nil {
 		return fmt.Errorf("prepare new note '%s': %w", item.Name, err)
 	}
@@ -110,10 +114,9 @@ func (s *Syncer) createNew(item types.Item, targetDir, folder string) error {
 }
 
 func (s *Syncer) updateTracked(item types.Item, entry state.NoteEntry, targetDir, folder string) error {
-	newPath := filepath.Join(targetDir, item.Name)
-	absNewPath, err := filepath.Abs(newPath)
-	if err == nil {
-		newPath = absNewPath
+	newPath, err := resolveNotePath(targetDir, item.Name)
+	if err != nil {
+		return fmt.Errorf("resolve note '%s': %w", item.Name, err)
 	}
 	absTargetDir, err := filepath.Abs(targetDir)
 	if err == nil {
@@ -129,7 +132,7 @@ func (s *Syncer) updateTracked(item types.Item, entry state.NoteEntry, targetDir
 	}
 
 	if entry.FilePath != newPath {
-		if err := renameTrackedFile(entry.FilePath, newPath); err != nil {
+		if err := renameTrackedFile(entry.FilePath, newPath, targetDir); err != nil {
 			return fmt.Errorf("rename tracked note '%s': %w", entry.FileName, err)
 		}
 	}
@@ -153,6 +156,9 @@ func (s *Syncer) updateTracked(item types.Item, entry state.NoteEntry, targetDir
 }
 
 func ensureWritableNewFile(path string) error {
+	if err := ensureParentDir(path); err != nil {
+		return err
+	}
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("file already exists: %s", filepath.Base(path))
 	} else if !os.IsNotExist(err) {
@@ -161,9 +167,12 @@ func ensureWritableNewFile(path string) error {
 	return nil
 }
 
-func renameTrackedFile(oldPath, newPath string) error {
+func renameTrackedFile(oldPath, newPath, targetDir string) error {
 	if oldPath == newPath {
 		return nil
+	}
+	if err := ensureParentDir(newPath); err != nil {
+		return err
 	}
 	if _, err := os.Stat(newPath); err == nil {
 		return fmt.Errorf("target file already exists: %s", filepath.Base(newPath))
@@ -176,10 +185,14 @@ func renameTrackedFile(oldPath, newPath string) error {
 		}
 		return err
 	}
+	_ = removeEmptyParentDirs(oldPath, targetDir)
 	return nil
 }
 
 func writeNoteFile(path, content string) error {
+	if err := ensureParentDir(path); err != nil {
+		return err
+	}
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
@@ -204,5 +217,92 @@ func (s *Syncer) Remove(entry state.NoteEntry) error {
 	if _, err := os.Stat(entry.FilePath); os.IsNotExist(err) {
 		return nil
 	}
-	return os.Remove(entry.FilePath)
+	if err := os.Remove(entry.FilePath); err != nil {
+		return err
+	}
+	_ = removeEmptyParentDirs(entry.FilePath, noteCleanupRoot(entry))
+	return nil
+}
+
+func noteCleanupRoot(entry state.NoteEntry) string {
+	if entry.TargetDir != "" {
+		return entry.TargetDir
+	}
+	if entry.FilePath != "" {
+		return filepath.Dir(entry.FilePath)
+	}
+	return ""
+}
+
+func resolveNotePath(targetDir, noteName string) (string, error) {
+	if strings.TrimSpace(noteName) == "" {
+		return "", fmt.Errorf("note name is empty")
+	}
+	cleanName := filepath.Clean(noteName)
+	if cleanName == "." {
+		return "", fmt.Errorf("note name resolves to current directory")
+	}
+	if filepath.IsAbs(cleanName) {
+		return "", fmt.Errorf("absolute note paths are not allowed")
+	}
+	if cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("note path cannot escape target directory")
+	}
+	fullPath := filepath.Join(targetDir, cleanName)
+	absTargetDir, err := filepath.Abs(targetDir)
+	if err != nil {
+		absTargetDir = targetDir
+	}
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		absPath = fullPath
+	}
+	if absPath != absTargetDir && !strings.HasPrefix(absPath, absTargetDir+string(os.PathSeparator)) {
+		return "", fmt.Errorf("note path cannot escape target directory")
+	}
+	return absPath, nil
+}
+
+func ensureParentDir(path string) error {
+	return os.MkdirAll(filepath.Dir(path), 0o700)
+}
+
+func removeEmptyParentDirs(path, targetDir string) error {
+	if targetDir == "" {
+		return nil
+	}
+	stopDir, err := filepath.Abs(targetDir)
+	if err != nil {
+		stopDir = targetDir
+	}
+	dir := filepath.Dir(path)
+	for {
+		if dir == "." || dir == string(os.PathSeparator) || dir == stopDir {
+			return nil
+		}
+		err := os.Remove(dir)
+		if err == nil {
+			next := filepath.Dir(dir)
+			if next == dir {
+				return nil
+			}
+			dir = next
+			continue
+		}
+		if os.IsNotExist(err) {
+			next := filepath.Dir(dir)
+			if next == dir {
+				return nil
+			}
+			dir = next
+			continue
+		}
+		if strings.Contains(err.Error(), "directory not empty") {
+			return nil
+		}
+		if _, ok := err.(*os.PathError); ok {
+			return nil
+		}
+		return err
+	}
 }

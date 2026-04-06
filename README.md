@@ -32,7 +32,7 @@ pkv update
 ```text
 $ pkv
 Interactive mode. Type 'help' for commands, 'exit' to quit.
-Examples: 'get dev env', 'dev get env', or 'dev env'.
+Examples: 'get dev env' or 'dev env'.
 pkv>
 ```
 
@@ -133,6 +133,8 @@ REDIS_URL=redis://127.0.0.1:6379/0
 - Note 内容：一整份 JSON
 
 `pkv get <folder> note` 会把这些 note 同步到当前目录，文件名直接使用 note 名称。
+如果 note 名称里包含路径，例如 `lyra/test/note`，就会按这个目录结构写到当前目录下。
+出于安全考虑，不允许使用绝对路径或 `..` 逃逸出当前目录。
 
 ## 快速上手
 
@@ -222,13 +224,6 @@ pkv> list prod
 pkv> get prod ssh
 pkv> get prod env
 pkv> get prod note
-```
-
-也支持 folder 在前的写法：
-
-```text
-pkv> dev get env
-pkv> dev remove note 3b8d1c2e-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
 ### 简写命令
@@ -531,7 +526,7 @@ export BW_SESSION="$(bw unlock --raw)"
 
 ```bash
 PKV_DEBUG=1 pkv
-pkv> dev get env
+pkv> dev env
 ```
 
 ### `pkv get <folder> note` 报文件冲突

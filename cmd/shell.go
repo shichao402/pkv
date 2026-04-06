@@ -23,7 +23,7 @@ func runShell(_ *cobra.Command, _ []string) error {
 	rl.CaptureExitSignal()
 
 	fmt.Println("Interactive mode. Type 'help' for commands, 'exit' to quit.")
-	fmt.Println("Examples: 'get dev env', 'dev get env', or 'dev env'.")
+	fmt.Println("Examples: 'get dev env' or 'dev env'.")
 
 	for {
 		line, err := rl.Readline()
@@ -152,8 +152,6 @@ func translateShellArgs(args []string) ([]string, error) {
 		return []string{"list", folder}, nil
 	case isShellResourceKind(second):
 		return translateResourceFirstArgs(folder, second, rest)
-	case isShellResourceAction(second):
-		return translateActionFirstArgs(folder, second, rest)
 	default:
 		return nil, fmt.Errorf("unknown command: %s", second)
 	}
@@ -164,19 +162,8 @@ func translateResourceFirstArgs(folder, kind string, rest []string) ([]string, e
 		return []string{"get", folder, kind}, nil
 	}
 	action := rest[0]
-	if !isShellResourceAction(action) {
+	if !isShellResourceSubcommand(action) {
 		return nil, fmt.Errorf("unknown action: %s", action)
-	}
-	return append([]string{action, folder, kind}, rest[1:]...), nil
-}
-
-func translateActionFirstArgs(folder, action string, rest []string) ([]string, error) {
-	if len(rest) == 0 {
-		return nil, fmt.Errorf("usage: <folder> %s <ssh|env|note>", action)
-	}
-	kind := rest[0]
-	if !isShellResourceKind(kind) {
-		return nil, fmt.Errorf("unknown resource type: %s (expected ssh, env, or note)", kind)
 	}
 	return append([]string{action, folder, kind}, rest[1:]...), nil
 }
@@ -190,9 +177,9 @@ func isShellResourceKind(s string) bool {
 	}
 }
 
-func isShellResourceAction(s string) bool {
+func isShellResourceSubcommand(s string) bool {
 	switch s {
-	case "get", "add", "edit", "remove", "clean":
+	case "add", "edit", "remove", "clean":
 		return true
 	default:
 		return false

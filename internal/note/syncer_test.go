@@ -41,6 +41,33 @@ func TestSyncFolderCreatesAndTracksFiles(t *testing.T) {
 	}
 }
 
+func TestSyncFolderCreatesNestedFiles(t *testing.T) {
+	st := &state.State{}
+	syncer := NewSyncer(st)
+	dir := t.TempDir()
+
+	items := []types.Item{{ID: "item1", Name: "lyra/test/note", Notes: "nested\n"}}
+	count, err := syncer.SyncFolder(items, dir, "team-a")
+	if err != nil {
+		t.Fatalf("SyncFolder() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("SyncFolder() count = %d, want 1", count)
+	}
+
+	path := filepath.Join(dir, "lyra", "test", "note")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read nested file: %v", err)
+	}
+	if string(data) != "nested\n" {
+		t.Fatalf("file content = %q", string(data))
+	}
+	if st.Notes[0].FilePath != path {
+		t.Fatalf("tracked file path = %q, want %q", st.Notes[0].FilePath, path)
+	}
+}
+
 func TestSyncFolderUpdatesRenamedRemoteNote(t *testing.T) {
 	dir := t.TempDir()
 	oldPath := filepath.Join(dir, "old.env")
@@ -160,6 +187,67 @@ func TestSyncFolderFailsOnUntrackedFileConflict(t *testing.T) {
 	_, err := syncer.SyncFolder([]types.Item{{ID: "item1", Name: "config.yml", Notes: "remote"}}, dir, "team-a")
 	if err == nil {
 		t.Fatal("expected conflict error")
+	}
+}
+
+func TestSyncFolderRejectsEscapingPath(t *testing.T) {
+	dir := t.TempDir()
+	syncer := NewSyncer(&state.State{})
+
+	_, err := syncer.SyncFolder([]types.Item{{ID: "item1", Name: "../config.yml", Notes: "remote"}}, dir, "team-a")
+	if err == nil {
+		t.Fatal("expected escaping path error")
+	}
+}
+
+func TestRemoveDeletesEmptyParentDirsWithinTarget(t *testing.T) {
+	st := &state.State{}
+	syncer := NewSyncer(st)
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "lyra", "test", "note")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := state.NoteEntry{
+		ItemID:    "item1",
+		FileName:  "lyra/test/note",
+		FilePath:  filePath,
+		TargetDir: dir,
+	}
+
+	if err := syncer.Remove(entry); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lyra")); !os.IsNotExist(err) {
+		t.Fatalf("expected empty parent dirs to be removed, stat err = %v", err)
+	}
+}
+
+func TestRemoveKeepsTargetDir(t *testing.T) {
+	st := &state.State{}
+	syncer := NewSyncer(st)
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "note")
+	if err := os.WriteFile(filePath, []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := state.NoteEntry{
+		ItemID:    "item1",
+		FileName:  "note",
+		FilePath:  filePath,
+		TargetDir: dir,
+	}
+
+	if err := syncer.Remove(entry); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("target dir should remain: %v", err)
 	}
 }
 

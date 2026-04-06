@@ -7,11 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.4.1] - 2026-04-07
+
+### Added
+- `pkv get <folder> note` 现在支持按 Secure Note 名称里的相对路径创建嵌套目录，例如 `lyra/test/note`
+- 新增 Note 嵌套路径、安全路径校验以及清理空目录的测试覆盖
+
+### Changed
+- Note 同步会拒绝绝对路径和 `..` 路径，避免写出当前目标目录之外
+- 交互模式移除 `dev get env` 这类 folder-action-first 语法，只保留标准命令和 `dev env` 这种简写
+- README 更新了新的 note 路径规则与交互命令示例
+
 ## [v0.4.0] - 2026-04-06
 
 ### Added
 - 交互模式支持历史记录、方向键切换与 `Ctrl+R` 反向搜索
-- 交互模式支持 `dev get env`、`dev remove note <id>` 这类 folder 在前的写法
+- 交互模式支持 `dev env`、`prod note add ...` 这类 folder 在前的资源简写
 - 新增 `PKV_DEBUG=1` 脱敏诊断日志能力，覆盖 shell、Bitwarden 会话与 env 产物部署路径
 - 新增导出 `BW_SESSION` 复用、失效重试与交互 shell 翻译相关测试
 
