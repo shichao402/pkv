@@ -30,22 +30,14 @@ type customField struct {
 	Type  int    `json:"type"` // 0 = Text
 }
 
-// Add creates a new Secure Note in Bitwarden.
-// If isEnv is true, a pkv_type=env custom field is added.
-// Returns the created item's raw output (contains ID).
-func Add(client *bw.Client, session, folderID, name, content string, isEnv bool) (string, error) {
+// Add creates a new Secure Note in Bitwarden and returns the created item ID.
+func Add(client *bw.Client, session, folderID, name, content string) (string, error) {
 	item := secureNoteItem{
 		Type:       types.ItemTypeSecureNote,
 		Name:       name,
 		FolderID:   folderID,
 		Notes:      content,
 		SecureNote: secureNoteObj{Type: 0},
-	}
-
-	if isEnv {
-		item.Fields = []customField{
-			{Name: types.PKVFieldName, Value: types.PKVTypeEnv, Type: 0},
-		}
 	}
 
 	itemJSON, err := json.Marshal(item)
@@ -81,29 +73,38 @@ func Edit(client *bw.Client, session string, item types.Item) (bool, error) {
 		return false, nil
 	}
 
+	if err := UpdateContent(client, session, item.ID, edited); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// UpdateContent updates the note content for an existing Bitwarden item.
+func UpdateContent(client *bw.Client, session, itemID, content string) error {
 	// Get the full item JSON for editing (bw edit requires full item)
-	fullJSON, err := client.GetItemRaw(session, item.ID)
+	fullJSON, err := client.GetItemRaw(session, itemID)
 	if err != nil {
-		return false, fmt.Errorf("get item for edit: %w", err)
+		return fmt.Errorf("get item for edit: %w", err)
 	}
 
 	// Parse, update Notes, re-marshal
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(fullJSON), &raw); err != nil {
-		return false, fmt.Errorf("parse item JSON: %w", err)
+		return fmt.Errorf("parse item JSON: %w", err)
 	}
-	raw["notes"] = edited
+	raw["notes"] = content
 
 	updatedJSON, err := json.Marshal(raw)
 	if err != nil {
-		return false, fmt.Errorf("marshal updated item: %w", err)
+		return fmt.Errorf("marshal updated item: %w", err)
 	}
 
-	if err := client.EditItem(session, item.ID, updatedJSON); err != nil {
-		return false, fmt.Errorf("edit item: %w", err)
+	if err := client.EditItem(session, itemID, updatedJSON); err != nil {
+		return fmt.Errorf("edit item: %w", err)
 	}
 
-	return true, nil
+	return nil
 }
 
 // ResolveItem finds an item by name or ID. Tries name first, then ID.

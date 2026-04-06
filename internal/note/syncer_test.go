@@ -9,133 +9,158 @@ import (
 	"github.com/shichao402/pkv/internal/state"
 )
 
-func TestSync(t *testing.T) {
-	t.Run("normal sync creates file", func(t *testing.T) {
-		st := &state.State{}
-		syncer := NewSyncer(st)
-		dir := t.TempDir()
+func TestSyncFolderCreatesAndTracksFiles(t *testing.T) {
+	st := &state.State{}
+	syncer := NewSyncer(st)
+	dir := t.TempDir()
 
-		item := types.Item{
-			ID:    "item1",
-			Name:  "config.yml",
-			Notes: "key: value\n",
-		}
+	items := []types.Item{{ID: "item1", Name: "config.yml", Notes: "key: value\n"}}
+	count, err := syncer.SyncFolder(items, dir, "team-a")
+	if err != nil {
+		t.Fatalf("SyncFolder() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("SyncFolder() count = %d, want 1", count)
+	}
 
-		if err := syncer.Sync(item, dir, "team-a"); err != nil {
-			t.Fatalf("Sync() error = %v", err)
-		}
+	data, err := os.ReadFile(filepath.Join(dir, "config.yml"))
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != "key: value\n" {
+		t.Fatalf("file content = %q", string(data))
+	}
+	if len(st.Notes) != 1 {
+		t.Fatalf("state notes = %d, want 1", len(st.Notes))
+	}
+	if st.Notes[0].TargetDir == "" {
+		t.Fatal("target dir should be recorded")
+	}
+	if st.Notes[0].ContentHash == "" {
+		t.Fatal("content hash should be recorded")
+	}
+}
 
-		filePath := filepath.Join(dir, "config.yml")
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			t.Fatalf("failed to read synced file: %v", err)
-		}
-		if string(data) != "key: value\n" {
-			t.Errorf("file content = %q, want %q", string(data), "key: value\n")
-		}
+func TestSyncFolderUpdatesRenamedRemoteNote(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := filepath.Join(dir, "old.env")
+	if err := os.WriteFile(oldPath, []byte("A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := &state.State{}
+	absDir, _ := filepath.Abs(dir)
+	st.AddNote(state.NoteEntry{
+		ItemID:      "item1",
+		Folder:      "team-a",
+		TargetDir:   absDir,
+		FileName:    "old.env",
+		FilePath:    oldPath,
+		ContentHash: hashContent("A=1\n"),
 	})
 
-	t.Run("empty notes returns error", func(t *testing.T) {
-		st := &state.State{}
-		syncer := NewSyncer(st)
-		dir := t.TempDir()
+	syncer := NewSyncer(st)
+	items := []types.Item{{ID: "item1", Name: "new.env", Notes: "A=2\n"}}
+	_, err := syncer.SyncFolder(items, dir, "team-a")
+	if err != nil {
+		t.Fatalf("SyncFolder() error = %v", err)
+	}
 
-		item := types.Item{
-			ID:    "item1",
-			Name:  "empty.txt",
-			Notes: "",
-		}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old path still exists")
+	}
+	newPath := filepath.Join(dir, "new.env")
+	data, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("read new file: %v", err)
+	}
+	if string(data) != "A=2\n" {
+		t.Fatalf("new file content = %q", string(data))
+	}
+	entry := st.FindNoteEntry("item1", "team-a", absDir)
+	if entry == nil {
+		t.Fatal("expected tracked entry")
+	}
+	if entry.FileName != "new.env" {
+		t.Fatalf("file name = %q", entry.FileName)
+	}
+}
 
-		err := syncer.Sync(item, dir, "team-a")
-		if err == nil {
-			t.Fatal("Sync() expected error for empty notes, got nil")
-		}
-	})
+func TestSyncFolderRemovesDeletedRemoteNote(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stale.txt")
+	if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	t.Run("file already exists returns error", func(t *testing.T) {
-		st := &state.State{}
-		syncer := NewSyncer(st)
-		dir := t.TempDir()
+	absDir, _ := filepath.Abs(dir)
+	st := &state.State{Notes: []state.NoteEntry{{
+		ItemID:      "item1",
+		Folder:      "team-a",
+		TargetDir:   absDir,
+		FileName:    "stale.txt",
+		FilePath:    path,
+		ContentHash: hashContent("stale"),
+	}}}
 
-		// Pre-create the file
-		existingPath := filepath.Join(dir, "exists.txt")
-		if err := os.WriteFile(existingPath, []byte("existing"), 0o600); err != nil {
-			t.Fatalf("failed to create existing file: %v", err)
-		}
+	syncer := NewSyncer(st)
+	count, err := syncer.SyncFolder(nil, dir, "team-a")
+	if err != nil {
+		t.Fatalf("SyncFolder() error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale file should be removed")
+	}
+	if len(st.Notes) != 0 {
+		t.Fatalf("state notes = %d, want 0", len(st.Notes))
+	}
+}
 
-		item := types.Item{
-			ID:    "item1",
-			Name:  "exists.txt",
-			Notes: "new content",
-		}
+func TestSyncFolderKeepsLocallyModifiedDeletedRemoteNote(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stale.txt")
+	if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-		err := syncer.Sync(item, dir, "team-a")
-		if err == nil {
-			t.Fatal("Sync() expected error for existing file, got nil")
-		}
-	})
+	absDir, _ := filepath.Abs(dir)
+	st := &state.State{Notes: []state.NoteEntry{{
+		ItemID:      "item1",
+		Folder:      "team-a",
+		TargetDir:   absDir,
+		FileName:    "stale.txt",
+		FilePath:    path,
+		ContentHash: hashContent("original"),
+	}}}
 
-	t.Run("file permission is 0600", func(t *testing.T) {
-		st := &state.State{}
-		syncer := NewSyncer(st)
-		dir := t.TempDir()
+	syncer := NewSyncer(st)
+	_, err := syncer.SyncFolder(nil, dir, "team-a")
+	if err == nil {
+		t.Fatal("expected modified stale note error")
+	}
+	if len(st.Notes) != 1 {
+		t.Fatalf("state notes = %d, want 1", len(st.Notes))
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("local file should remain: %v", err)
+	}
+}
 
-		item := types.Item{
-			ID:    "item1",
-			Name:  "secret.txt",
-			Notes: "secret content",
-		}
+func TestSyncFolderFailsOnUntrackedFileConflict(t *testing.T) {
+	dir := t.TempDir()
+	conflict := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(conflict, []byte("manual"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-		if err := syncer.Sync(item, dir, "team-a"); err != nil {
-			t.Fatalf("Sync() error = %v", err)
-		}
-
-		filePath := filepath.Join(dir, "secret.txt")
-		info, err := os.Stat(filePath)
-		if err != nil {
-			t.Fatalf("failed to stat file: %v", err)
-		}
-		perm := info.Mode().Perm()
-		if perm != 0o600 {
-			t.Errorf("file permission = %o, want %o", perm, 0o600)
-		}
-	})
-
-	t.Run("state records note correctly", func(t *testing.T) {
-		st := &state.State{}
-		syncer := NewSyncer(st)
-		dir := t.TempDir()
-
-		item := types.Item{
-			ID:    "item1",
-			Name:  "tracked.txt",
-			Notes: "tracked content",
-		}
-
-		if err := syncer.Sync(item, dir, "team-a"); err != nil {
-			t.Fatalf("Sync() error = %v", err)
-		}
-
-		if len(st.Notes) != 1 {
-			t.Fatalf("expected 1 note in state, got %d", len(st.Notes))
-		}
-		entry := st.Notes[0]
-		if entry.ItemID != "item1" {
-			t.Errorf("state ItemID = %q, want %q", entry.ItemID, "item1")
-		}
-		if entry.Folder != "team-a" {
-			t.Errorf("state Folder = %q, want %q", entry.Folder, "team-a")
-		}
-		if entry.FileName != "tracked.txt" {
-			t.Errorf("state FileName = %q, want %q", entry.FileName, "tracked.txt")
-		}
-		if entry.FilePath == "" {
-			t.Error("state FilePath should not be empty")
-		}
-		if entry.SyncedAt == "" {
-			t.Error("state SyncedAt should not be empty")
-		}
-	})
+	syncer := NewSyncer(&state.State{})
+	_, err := syncer.SyncFolder([]types.Item{{ID: "item1", Name: "config.yml", Notes: "remote"}}, dir, "team-a")
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
 }
 
 func TestRemove(t *testing.T) {

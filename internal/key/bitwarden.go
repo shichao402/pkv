@@ -57,5 +57,15 @@ func CreateBWSSHKey(session, name, folderID, privateKey, publicKey, fingerprint 
 		return "", fmt.Errorf("bw create item failed: %w\n%s", err, string(output))
 	}
 
-	return strings.TrimSpace(string(output)), nil
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(output, &created); err != nil {
+		return "", fmt.Errorf("parse created item: %w", err)
+	}
+	if created.ID == "" {
+		return "", fmt.Errorf("created item response missing id")
+	}
+
+	return created.ID, nil
 }

@@ -1,389 +1,532 @@
 # PKV - Personal Key Vault
 
-**PKV** 是一个命令行工具，用于从 **Bitwarden 密码库** 便捷地部署和管理 SSH 密钥及敏感配置文件。一条命令快速启用 SSH，自动配置 `~/.ssh/config` 和 `known_hosts`。
+**PKV** 是一个围绕 Bitwarden 组织的命令行工具，用来把一个 folder 里的三类资源落到本地：
 
-## 功能
+- SSH Key Item：部署到 `~/.ssh/`
+- 一个保留名为 `pkv.env` 的 Secure Note：生成 env 产物文件
+- 其他 Secure Note：同步成当前项目目录里的配置文件
 
-- 🔐 **从 Bitwarden 自动部署 SSH 密钥** - 无需手动复制粘贴
-- ⚡ **自动配置 SSH** - 生成完整的 `~/.ssh/config`，支持自定义端口、多主机
-- 🔑 **导入 SSH 密钥到 Bitwarden** - 将本地 SSH 私钥存储到指定文件夹的 Bitwarden SSH Key Item
-- 🌐 **部署环境变量** - 从 Bitwarden Note 同步 KEY=VALUE 到系统环境变量
-- 📝 **同步敏感配置文件** - 将 Bitwarden Note 快速导出到当前目录
-- 🧹 **精确清理** - 支持 `clean` 命令，安全移除部署的密钥和配置，不损害手动添加的内容
-- 🔄 **自动更新** - `pkv update` 检查并下载最新版本
-- 🌍 **跨平台** - 支持 Linux、macOS、Windows，amd64、arm64 架构
+当前版本的核心目标只有两个：
 
-## 快速开始
+- 命令结构直观，先选动作，再选 folder，再选资源类型
+- 明确本地和远端的对齐规则，避免“到底谁覆盖谁”不清楚
 
-### 1. 安装
+## 命令模型
 
-**macOS / Linux：**
+新的命令只有这一套：
+
+```bash
+pkv list [folder]
+pkv get <folder> <ssh|env|note>
+pkv add <folder> <ssh|env|note>
+pkv edit <folder> <env|note> [name-or-id]
+pkv remove <folder> <ssh|env|note> [id...]
+pkv clean <folder> <ssh|env|note>
+pkv update
+```
+
+旧命令模型已经移除，不再维护兼容层。
+
+如果直接执行 `pkv`，会进入交互模式：
+
+```text
+$ pkv
+Interactive mode. Type 'help' for commands, 'exit' to quit.
+pkv>
+```
+
+交互模式里同一个 `pkv` 进程会把 `BW_SESSION` 保持在内存中，所以你在一次会话里连续执行多条命令，不需要每次都重新输入主密码。
+
+## 安装
+
+### macOS / Linux
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/main/install.sh | bash
 ```
 
-**Windows (PowerShell)：**
+### Windows (PowerShell)
+
 ```powershell
 irm https://raw.githubusercontent.com/shichao402/pkv/main/install.ps1 | iex
 ```
 
-验证安装：
+验证：
+
 ```bash
 pkv --version
 ```
 
-> macOS/Linux 安装到 `~/.local/bin`，Windows 安装到 `%LOCALAPPDATA%\pkv`。
-> 脚本会自动检测 PATH，提示添加（如未包含）。
+## Bitwarden 数据组织
 
-### 2. 准备 Bitwarden 数据
+PKV 的组织单位是 **folder**。一个 folder 通常对应一个环境、一个项目，或者一个“可以一起落地”的秘密集合。
 
-在 Bitwarden 中创建或编辑 SSH 密钥 Item，要求：
+### 1. SSH
 
-#### SSH Key Item
-- **类型**：SSH Key（Bitwarden 有专门的 SSH 密钥类型）
-- **名称**：任意（如 `github-key`、`server-key` 等）
-- **Notes（备注）**：填写可应用的主机地址，**一行一个**
-  ```
-  github.com
-  10.0.0.1:2222
-  *.example.com
-  ```
+使用 Bitwarden 原生的 **SSH Key** Item。
 
-#### Env Note（环境变量）
-- **类型**：Secure Note
-- **名称**：任意（如 `database-creds`）
-- **自定义字段**：添加一个字段，**Name** 为 `pkv_type`，**Value** 为 `env`
-- **内容**：KEY=VALUE 格式，一行一个
-  ```
-  DB_HOST=localhost
-  DB_USER=admin
-  export DB_PASS="s3cret"
-  # 注释会被忽略
-  ```
+要求：
 
-> **重要**：`pkv env` 命令**只会处理**标记了 `pkv_type=env` 的 Secure Note，未标记的会被跳过并提示警告。这样可以避免普通文本 Note 被误当作环境变量部署。
+- 类型：`SSH Key`
+- 名称：任意，例如 `github-prod`
+- `Notes`：写目标主机，一行一个
 
-#### Config Note（配置文件）
-- **类型**：Secure Note
-- **名称**：任意（如 `config.json`，会作为导出的文件名）
-- **内容**：任意文本
+示例：
 
-> `pkv note` 命令会自动排除标记了 `pkv_type=env` 的 Note，其余 Note 正常同步为文件。
-
-### 3. 部署
-
-```bash
-# 从 LyraX 文件夹部署所有 SSH 密钥
-pkv ssh LyraX
-
-# 执行过程：
-# - 提示输入 Bitwarden 主密码和二次验证
-# - 自动扫描所有目标主机，添加到 known_hosts
-# - 生成 ~/.ssh/config 和 ~/.ssh/pkv_* 密钥文件
+```text
+github.com
+10.0.0.12
+10.0.0.13:2222
+*.corp.internal
 ```
 
-### 4. 使用
+`pkv get <folder> ssh` 会把这些 Key 部署到本地，并基于 `Notes` 生成 `~/.ssh/config` 和 `known_hosts` 的 PKV 管理区块。
 
-SSH 配置已自动生成，直接使用即可：
-```bash
-ssh github.com
-ssh -p 2222 10.0.0.1
-ssh user@example.com
+### 2. Env
+
+一个 folder 里只允许一个 env item，使用 **Secure Note**，名字固定为：
+
+```text
+pkv.env
 ```
 
-### 5. 部署环境变量
+要求：
 
-```bash
-# 从 credentials 文件夹部署环境变量
-pkv env credentials
+- 类型：`Secure Note`
+- 名称：`pkv.env`
+- 内容：`KEY=VALUE`，一行一个
 
-# 清理已部署的环境变量
-pkv env credentials clean
+示例：
+
+```text
+DB_HOST=127.0.0.1
+DB_USER=app
+DB_PASS="secret"
+REDIS_URL=redis://127.0.0.1:6379/0
 ```
 
-> Linux/macOS 下变量写入 `~/.pkv/env.sh` 并自动 source；Windows 下设为用户级环境变量。
-> 部署后需要打开新终端才能生效。
+说明：
 
-### 6. 同步配置文件
+- 新版本不再要求 `pkv_type=env` 字段。
+- 历史上已经用 `pkv_type=env` 标过的旧数据仍然能识别，便于迁移。
+- `pkv get <folder> env` 不会修改系统环境变量，它只生成本地产物文件。
+
+### 3. Note
+
+同一个 folder 里，除了 `pkv.env` 之外的其他 **Secure Note**，都视为“配置文件模板”。
+
+要求：
+
+- 类型：`Secure Note`
+- 名称：目标文件名，例如 `app.secrets.json`、`.env.local`、`config.yaml`
+- 内容：文件正文
+
+示例：
+
+- Note 名称：`app.secrets.json`
+- Note 内容：一整份 JSON
+
+`pkv get <folder> note` 会把这些 note 同步到当前目录，文件名直接使用 note 名称。
+
+## 快速上手
+
+### 1. 看有哪些 folder
 
 ```bash
-cd ~/my-project
-
-# 从 LyraX 文件夹同步所有 Note 为文件到当前目录（自动排除 env 类型）
-pkv note LyraX
-# 结果：lyraXX 文件被创建到当前目录
+pkv list
 ```
 
-### 7. 清理
+### 2. 看某个 folder 里有什么
 
 ```bash
-# 移除所有部署的 SSH 密钥和配置
-pkv ssh LyraX clean
-
-# 移除所有同步的 note 文件
-pkv note LyraX clean
+pkv list prod
 ```
 
-## 命令参考
+输出会按资源分组，告诉你：
 
-### 管理 SSH 密钥
+- 有多少 SSH Key
+- 有没有 `pkv.env`
+- 有多少普通配置 note
+
+### 3. 拉取 SSH
 
 ```bash
-pkv ssh <folder>                       # 从指定文件夹部署 SSH 密钥
-pkv ssh <folder> list                  # 列出文件夹中的 SSH 密钥
-pkv ssh <folder> add                   # 交互式导入本地 SSH 密钥到文件夹
-pkv ssh <folder> remove <id> [id2]...  # 从 Bitwarden 删除指定密钥
-pkv ssh <folder> clean                 # 清理本地已部署的 SSH 密钥
+pkv get prod ssh
 ```
 
-**`add` 选项**：
-- `--priv` - 私钥文件路径（省略则交互式输入）
-- `--pub` - 公钥内容，`ssh-rsa AAAA...` 格式（省略则从私钥自动生成）
-- `--name` - 密钥在 Bitwarden 中的名称（省略则交互式输入）
+这会：
 
-**支持的私钥格式**：PEM（PKCS1/PKCS8/EC）、OpenSSH，自动转换为 OpenSSH 标准格式存储。
+- 从 Bitwarden 同步 `prod` folder 里的所有 SSH Key
+- 写入 `~/.ssh/pkv_*`
+- 更新 `~/.ssh/config`
+- 更新 `~/.ssh/known_hosts`
+- 把部署状态写进 `~/.pkv/state.json`
 
-**例子**：
+### 4. 生成 env 产物
+
 ```bash
-pkv ssh LyraX                  # 部署文件夹中所有密钥
-pkv ssh LyraX list             # 列出密钥（显示 ID、名称、指纹、主机）
-pkv ssh LyraX add --priv ~/.ssh/id_ed25519 --name "github-key"  # 导入密钥
-pkv ssh LyraX remove 123e4567-e89b-12d3-a456-426614174000       # 删除密钥
-pkv ssh LyraX clean            # 清理本地部署
+pkv get prod env
 ```
 
-### 部署环境变量
+这会生成三份文件：
 
-```bash
-pkv env <folder>                           # 从指定文件夹部署环境变量（仅处理 pkv_type=env 的 Note）
-pkv env <folder> list                      # 列出文件夹中的环境变量 Note
-pkv env <folder> add --name <name> [--file <path>]  # 创建环境变量 Note
-pkv env <folder> remove <id> [id2]...      # 从 Bitwarden 删除指定的环境变量 Note
-pkv env <folder> edit <name-or-id>         # 用 $EDITOR 编辑环境变量 Note
-pkv env <folder> clean                     # 清理已部署的环境变量
+```text
+~/.pkv/env/prod.json
+~/.pkv/env/prod.sh
+~/.pkv/env/prod.ps1
 ```
 
-**`add` 选项**：
-- `--name` - Note 名称（必需）
-- `--file` - 从文件读取内容；省略则打开 `$EDITOR` 编写
+推荐使用方式：
 
-**`edit` 参数**：
-- `<name-or-id>` - 支持按名称或 ID 定位，优先按名称匹配
+- shell 场景：`source ~/.pkv/env/prod.sh`
+- 应用程序场景：直接读取 `~/.pkv/env/prod.json`
+- 更合理的长期做法：应用程序直接读取自己约定好的配置文件，而不是依赖全局环境注入
 
-**要求**：Secure Note 必须设置自定义字段 `pkv_type=env`，否则会被跳过。
+### 5. 同步项目配置文件
 
-**例子**：
+先进入项目目录：
+
 ```bash
-pkv env credentials            # 部署
-pkv env credentials list       # 列出
-pkv env credentials add --name "database" --file .env.prod  # 从文件创建
-pkv env credentials edit "database"  # 编辑
-pkv env credentials remove abc123def  # 删除
-pkv env credentials clean      # 清理
+cd ~/workspace/my-app
+pkv get prod note
 ```
 
-### 同步配置文件
+这会把 `prod` folder 里的普通 Secure Note 同步到当前目录。
+
+例如：
+
+- `app.secrets.json` -> `~/workspace/my-app/app.secrets.json`
+- `.env.local` -> `~/workspace/my-app/.env.local`
+
+## 交互模式
+
+直接运行：
 
 ```bash
-pkv note <folder>                          # 从指定文件夹导出 Note 到当前目录（排除 pkv_type=env）
-pkv note <folder> list                     # 列出文件夹中的配置 Note
-pkv note <folder> add --name <name> [--file <path>]  # 创建配置 Note
-pkv note <folder> remove <id> [id2]...     # 从 Bitwarden 删除指定配置 Note
-pkv note <folder> edit <name-or-id>        # 用 $EDITOR 编辑配置 Note
-pkv note <folder> clean                    # 移除已同步的 Note 文件
+pkv
 ```
 
-**`add` 选项**：
-- `--name` - Note 名称（必需）
-- `--file` - 从文件读取内容；省略则打开 `$EDITOR` 编写
+交互模式里既支持完整命令，也支持简写。
 
-**`edit` 参数**：
-- `<name-or-id>` - 支持按名称或 ID 定位，优先按名称匹配
+### 完整命令
 
-**例子**：
-```bash
-mkdir ~/config && cd ~/config
-pkv note LyraX                 # 同步所有 note 到 ~/config/
-pkv note LyraX list            # 列出
-pkv note LyraX add --name "nginx.conf" --file /etc/nginx/nginx.conf  # 创建
-pkv note LyraX edit "nginx.conf"  # 编辑
-pkv note LyraX remove abc123def   # 删除
-pkv note LyraX clean           # 清理
+```text
+pkv> list
+pkv> list prod
+pkv> get prod ssh
+pkv> get prod env
+pkv> get prod note
 ```
 
-## 编辑器配置
+### 简写命令
 
-`pkv note add` 和 `pkv env add` 命令在不使用 `--file` 选项时，以及 `edit` 命令会打开编辑器。
+```text
+pkv> prod list
+pkv> prod ssh
+pkv> prod env
+pkv> prod note
+pkv> prod env clean
+pkv> prod note add --name app.secrets.json --file ./app.secrets.json
+```
 
-编辑器选择优先级：
-1. 环境变量 `$EDITOR` 中指定的编辑器
-2. Linux/macOS 默认降级到 `vi`
-3. Windows 默认降级到 `notepad`
+退出方式：
 
-**设置编辑器**：
+```text
+pkv> exit
+```
+
+## 常用命令
+
+### `list`
+
 ```bash
-# 使用 vim
-export EDITOR=vim
+pkv list
+pkv list <folder>
+```
 
-# 使用 VS Code（需安装 `code` 命令）
+用途：
+
+- `pkv list`：列出 Bitwarden 里的 folder
+- `pkv list <folder>`：列出这个 folder 下的 SSH、env、note 概况
+
+### `get`
+
+```bash
+pkv get <folder> ssh
+pkv get <folder> env
+pkv get <folder> note
+```
+
+用途：
+
+- `ssh`：把远端 SSH Key 落到本地
+- `env`：把 `pkv.env` 物化为本地产物文件
+- `note`：把普通 Secure Note 同步到当前目录
+
+### `add`
+
+```bash
+pkv add <folder> ssh --priv ~/.ssh/id_ed25519 --name github-prod
+pkv add <folder> env --file .env.prod
+pkv add <folder> note --name app.secrets.json --file ./app.secrets.json
+```
+
+说明：
+
+- `add ssh`：向 Bitwarden 新建 SSH Key Item
+- `add env`：创建或覆盖这个 folder 的 `pkv.env`
+- `add note`：创建一个普通配置 note
+- `add env` / `add note` 如果不传 `--file`，会打开 `$EDITOR`
+
+### `edit`
+
+```bash
+pkv edit <folder> env
+pkv edit <folder> note <name-or-id>
+```
+
+说明：
+
+- `edit env`：编辑 `pkv.env`
+- `edit note`：按名称或 ID 编辑某个配置 note
+
+### `remove`
+
+```bash
+pkv remove <folder> env
+pkv remove <folder> ssh <id> [id2]...
+pkv remove <folder> note <id> [id2]...
+```
+
+说明：
+
+- `remove` 会删除 Bitwarden 里的远端资源
+- 对于已经落地到本地的资源，PKV 会尽量顺手清理本地产物
+
+### `clean`
+
+```bash
+pkv clean <folder> ssh
+pkv clean <folder> env
+pkv clean <folder> note
+```
+
+说明：
+
+- `clean` 只清理本地，不删除 Bitwarden 里的数据
+- `clean <folder> note` 只清理**当前目录**里这份同步结果
+
+## 本地与远端如何对齐
+
+这是 PKV 设计里最重要的一部分。
+
+### SSH 的对齐规则
+
+远端是唯一事实来源。
+
+执行 `pkv get <folder> ssh` 时：
+
+- 远端新增 Key：本地新增部署
+- 远端删除 Key：本地已追踪的旧 key 文件、config 条目会被移除
+- 远端重命名 Key：本地会按新名字重新部署，并更新相关配置
+- 本地手动改 `~/.ssh/pkv_*`：不建议，下一次 `get` 可能被重写
+
+状态追踪内容大致是：
+
+- Bitwarden item ID
+- 本地 key 文件路径
+- 主机列表
+- 当前 folder
+
+### Env 的对齐规则
+
+远端也是唯一事实来源。
+
+执行 `pkv get <folder> env` 时：
+
+- 远端存在 `pkv.env`：重新生成 `json/sh/ps1` 三份文件
+- 远端删除 `pkv.env`：本地已追踪的 env 产物会在下一次 `get` 时被清理
+- 本地手改这些产物：不建议，下一次 `get` 会重写
+
+状态追踪内容大致是：
+
+- env item ID
+- folder
+- 产物路径
+- 包含了哪些 key
+
+要点：
+
+- PKV 不再做“持久写入系统环境变量”的事情
+- env 在 PKV 里是“从远端生成本地文件”，不是“替你接管机器环境”
+
+### Note 的对齐规则
+
+Note 和 SSH / env 不一样，因为它直接落在项目目录，最容易和本地手工修改冲突。
+
+PKV 当前的规则是：
+
+- 追踪维度是 `folder + targetDir + itemID`
+- 同一个 folder 可以同步到多个不同目录，各自独立追踪
+- 远端新增 note：本地创建新文件
+- 远端重命名 note：本地已追踪文件会跟着改名
+- 远端修改内容：本地已追踪文件会更新
+- 远端删除 note：本地已追踪文件会删除
+
+但有一个保护规则：
+
+- 如果本地已追踪文件在上次同步后被你手工改过，PKV 会拒绝覆盖
+- 如果远端 note 已经删了，但本地文件被你手工改过，PKV 也会拒绝删除
+
+这意味着：
+
+- 你要改远端内容，应该用 `pkv edit <folder> note <name-or-id>`
+- 你要接受远端版本，先删除本地冲突文件，或者 `pkv clean <folder> note` 后再 `pkv get <folder> note`
+- 如果当前目录已经有一个**未被 PKV 追踪**的同名文件，PKV 也不会直接覆盖它
+
+状态追踪内容大致是：
+
+- Bitwarden item ID
+- folder
+- 目标目录
+- 文件路径
+- 上次同步内容的 hash
+
+## 推荐的数据组织方式
+
+如果你希望长期用得顺手，建议按下面的方法组织 Bitwarden：
+
+- 一个项目一个 folder，例如 `my-app-dev`、`my-app-prod`
+- 一个 folder 里最多一个 `pkv.env`
+- 每个真正需要落地成文件的机密配置，各自建一个 Secure Note
+- SSH 主机说明写在 SSH Key 的 `Notes` 里，而不是再额外建 note
+
+一个典型 folder 可能长这样：
+
+```text
+Folder: my-app-prod
+
+- SSH Key: deploy
+- SSH Key: github-actions
+- Secure Note: pkv.env
+- Secure Note: app.secrets.json
+- Secure Note: .env.runtime
+- Secure Note: redis.conf
+```
+
+这样做的好处是：
+
+- `pkv list my-app-prod` 一眼就能看懂
+- `pkv get my-app-prod env` 和 `pkv get my-app-prod note` 的行为边界很清楚
+- 不需要再靠额外 tag 去猜 note 到底是什么用途
+
+## 编辑器
+
+以下命令在不传 `--file` 时，会打开编辑器：
+
+- `pkv add <folder> env`
+- `pkv add <folder> note --name <name>`
+- `pkv edit <folder> env`
+- `pkv edit <folder> note <name-or-id>`
+
+编辑器优先级：
+
+1. `$EDITOR`
+2. macOS / Linux 下默认 `vi`
+3. Windows 下默认 `notepad`
+
+示例：
+
+```bash
 export EDITOR="code --wait"
-
-# 使用 nano
-export EDITOR=nano
 ```
 
-编辑完成后保存退出即可（`:wq` 在 vim 中，`Ctrl+S` 后 `Ctrl+X` 在 nano 中）。
+## 本地产物与状态文件
 
-### 更新
+PKV 会写这些位置：
 
-```bash
-pkv update                      # 检查并安装最新版本
+```text
+~/.ssh/config
+~/.ssh/known_hosts
+~/.ssh/pkv_*
+~/.pkv/state.json
+~/.pkv/env/<folder>.json
+~/.pkv/env/<folder>.sh
+~/.pkv/env/<folder>.ps1
+<current-dir>/<note-name>
 ```
 
-### 版本信息
-
-```bash
-pkv --version                   # 显示版本、提交哈希、编译时间
-```
-
-## 工作原理
-
-### SSH 密钥部署流程
-
-1. 认证 Bitwarden（主密码 + 二次验证）
-2. 同步个人密码库
-3. 查找指定文件夹中所有 SSH Key 类型的 Item
-4. 对每个 Key：
-   - 提取私钥，写入 `~/.ssh/pkv_{keyname}` (权限 0600)
-   - 提取公钥，写入 `~/.ssh/pkv_{keyname}.pub` (权限 0644)
-   - 从 Notes 读取目标主机列表
-   - 在 `~/.ssh/config` 中添加 Host 条目（使用 `>>> PKV MANAGED <<<` 标记块隔离）
-5. 自动运行 `ssh-keyscan` 扫描所有目标主机，添加到 `~/.ssh/known_hosts`
-6. 记录部署状态到 `~/.pkv/state.json`
-
-### 清理流程
-
-1. 读取 `~/.pkv/state.json` 中的部署记录
-2. 删除所有 `~/.ssh/pkv_*` 密钥文件
-3. 从 `~/.ssh/config` 中移除 PKV 标记块（保留其他手动配置）
-4. 从 `~/.ssh/known_hosts` 中移除 PKV 标记块
-5. 清空状态文件
-
-**安全设计**：
-- 使用标记注释隔离 PKV 管理的配置，清理时不会破坏你的手动配置
-- 状态文件（`~/.pkv/state.json`）权限为 0600，只记录路径和元数据，不存储敏感数据
-- 密钥文件权限为 0600，配置文件权限为 0600
-
-## 目录结构
-
-```
-~/.ssh/
-├── config                      # SSH 客户端配置
-├── known_hosts                 # 已知主机指纹
-├── pkv_*                       # PKV 管理的私钥
-└── pkv_*.pub                   # PKV 管理的公钥
-
-~/.pkv/
-└── state.json                  # PKV 部署状态追踪
-```
+`~/.pkv/state.json` 不保存私钥、密码、note 正文，只保存对齐所需的追踪信息。
 
 ## 依赖
 
-- **Bitwarden CLI**（`bw`） - 需要预先安装
-  ```bash
-  # macOS
-  brew install bitwarden-cli
-  
-  # Linux
-  sudo snap install bw
-  # 或
-  npm install -g @bitwarden/cli
-  ```
-  ```powershell
-  # Windows
-  winget install Bitwarden.CLI
-  # 或
-  choco install bitwarden-cli
-  # 或
-  scoop install bitwarden-cli
-  ```
-  > 如果未安装 `bw`，pkv 运行时会自动检测并给出当前平台的安装指引。
-- Go 1.21+ （仅用于从源码构建）
+- Bitwarden CLI：`bw`
+- Go 1.21+（仅源码构建时需要）
 
-## 安全考虑
+安装 Bitwarden CLI 示例：
 
-- 🔒 PKV 不存储任何密钥或密码，所有敏感数据仅在运行时从 Bitwarden 获取
-- 🔐 私钥文件权限自动设为 0600（仅所有者可读），配置文件权限为 0600
-- 🛡️ 状态文件（`~/.pkv/state.json`）不包含任何机密，仅记录路径和时间戳
-- 🔑 Bitwarden 主密码仅传递给 `bw` CLI，PKV 不触碰
-- ✅ 所有代码已审计，无硬编码凭证
+```bash
+# macOS
+brew install bitwarden-cli
+
+# Linux
+sudo snap install bw
+# 或
+npm install -g @bitwarden/cli
+```
+
+```powershell
+# Windows
+winget install Bitwarden.CLI
+# 或
+choco install bitwarden-cli
+# 或
+scoop install bitwarden-cli
+```
 
 ## 从源码构建
 
 ```bash
-# 克隆仓库
 git clone https://github.com/shichao402/pkv.git
 cd pkv
-
-# 构建
-make build                      # 构建当前平台
-make install                    # 构建并安装到 ~/.local/bin
-make release                    # 交叉编译所有平台到 dist/
+make build
+make install
+make release
 ```
+
+## 故障排查
+
+### `bw: command not found`
+
+先安装 Bitwarden CLI，并确保 `bw` 在 PATH 中。
+
+### `pkv get <folder> note` 报文件冲突
+
+通常有两种情况：
+
+- 当前目录已经存在未追踪的同名文件
+- 已追踪文件被你手工改过，PKV 拒绝覆盖
+
+处理方式：
+
+- 先确认本地文件是否要保留
+- 不保留就删除后重新 `pkv get <folder> note`
+- 或者先 `pkv clean <folder> note` 再重新同步
+
+### SSH 已部署但连接不对
+
+检查：
+
+- `pkv list <folder>` 看远端是否真的有目标 key
+- SSH Key 的 `Notes` 是否正确填写了 host / host:port
+- `~/.ssh/config` 里是否生成了 PKV 管理区块
 
 ## 更新
 
-使用 PKV 内置的自更新功能：
 ```bash
 pkv update
 ```
 
-或重新运行安装脚本：
-```bash
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/main/install.sh | bash
-```
-```powershell
-# Windows
-irm https://raw.githubusercontent.com/shichao402/pkv/main/install.ps1 | iex
-```
-
-## 故障排除
-
-### 问题：`bw: command not found`
-**解决**：安装 Bitwarden CLI
-```bash
-brew install bitwarden-cli  # macOS
-npm install -g @bitwarden/cli  # 通用
-```
-
-### 问题：SSH 连接时要求输入密码
-**解决**：
-1. 检查 SSH 密钥权限：`ls -la ~/.ssh/pkv_*` 应显示权限为 `-rw-------`
-2. 尝试手动连接测试：`ssh -i ~/.ssh/pkv_keyname user@host`
-3. 检查 `~/.ssh/config` 是否正确生成
-
-### 问题：`known_hosts` 中没有主机记录
-**解决**：
-1. 确保 `ssh-keyscan` 已安装（通常与 openssh-clients 一起）
-2. 手动运行：`ssh-keyscan -T 5 github.com >> ~/.ssh/known_hosts`
-
-### 问题：更新失败
-**解决**：
-1. 检查网络连接
-2. 确保当前版本小于最新版本
-3. 检查 GitHub Releases 是否有对应平台的二进制文件
-
 ## 许可证
 
 MIT
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 相关链接
-
-- [Bitwarden 官网](https://bitwarden.com)
-- [Bitwarden CLI 文档](https://bitwarden.com/help/cli/)
-- [GitHub](https://github.com/shichao402/pkv)

@@ -9,40 +9,39 @@ permissions:
   contents: write
 
 jobs:
-  bump:
-    name: Bump Version
+  prepare:
+    name: Prepare Release
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     outputs:
-      version: ${{ steps.bump.outputs.version }}
+      version: ${{ steps.meta.outputs.version }}
+      should_release: ${{ steps.meta.outputs.should_release }}
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Bump patch version
-        id: bump
+      - name: Read release version
+        id: meta
         run: |
-          CURRENT=$(python3 -c "import json; print(json.load(open('version.json'))['version'])")
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEW_PATCH=$((PATCH + 1))
-          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-          echo "{\"version\": \"${NEW_VERSION}\"}" > version.json
-          echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Bumped version: ${CURRENT} -> ${NEW_VERSION}"
+          git fetch --force --tags
+          VERSION=$(python3 -c "import json; print(json.load(open('version.json'))['version'])")
+          TAG="v${VERSION}"
 
-      - name: Commit and tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.json
-          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }} [skip ci]"
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push origin main --tags
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists. Skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Preparing release ${TAG} from version.json"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     name: Build
-    needs: bump
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -68,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: "v${{ needs.bump.outputs.version }}"
+          ref: "${{ github.sha }}"
 
       - uses: actions/setup-go@v5
         with:
@@ -80,7 +79,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          VERSION="v${{ needs.bump.outputs.version }}"
+          VERSION="v${{ needs.prepare.outputs.version }}"
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           MODULE="github.com/shichao402/pkv"
@@ -97,7 +96,8 @@ jobs:
 
   release:
     name: Create Release
-    needs: [bump, build]
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -116,8 +116,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          TAG="v${{ needs.bump.outputs.version }}"
+          TAG="v${{ needs.prepare.outputs.version }}"
           gh release create "${TAG}" \
+            --target "${GITHUB_SHA}" \
             --title "${TAG}" \
             --generate-notes \
             pkv_* \

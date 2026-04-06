@@ -22,18 +22,24 @@ type SSHKeyEntry struct {
 }
 
 type NoteEntry struct {
-	ItemID   string `json:"item_id"`
-	Folder   string `json:"folder,omitempty"`
-	FileName string `json:"file_name"`
-	FilePath string `json:"file_path"`
-	SyncedAt string `json:"synced_at"`
+	ItemID      string `json:"item_id"`
+	Folder      string `json:"folder,omitempty"`
+	TargetDir   string `json:"target_dir,omitempty"`
+	FileName    string `json:"file_name"`
+	FilePath    string `json:"file_path"`
+	ContentHash string `json:"content_hash,omitempty"`
+	SyncedAt    string `json:"synced_at"`
 }
 
 type EnvEntry struct {
-	ItemID string   `json:"item_id"`
-	Name   string   `json:"name"`
-	Keys   []string `json:"keys"`
-	SetAt  string   `json:"set_at"`
+	ItemID         string   `json:"item_id"`
+	Folder         string   `json:"folder,omitempty"`
+	Name           string   `json:"name"`
+	Keys           []string `json:"keys,omitempty"`
+	JSONPath       string   `json:"json_path,omitempty"`
+	ShellPath      string   `json:"shell_path,omitempty"`
+	PowerShellPath string   `json:"powershell_path,omitempty"`
+	SetAt          string   `json:"set_at"`
 }
 
 type State struct {
@@ -174,30 +180,48 @@ func (s *State) AddEnv(entry EnvEntry) {
 			s.Envs[i] = entry
 			return
 		}
+		if entry.Folder != "" && e.Folder == entry.Folder {
+			s.Envs[i] = entry
+			return
+		}
 	}
 	s.Envs = append(s.Envs, entry)
 }
 
-// FindEnvsByName returns all env entries matching the given folder/item name.
-func (s *State) FindEnvsByName(name string) []EnvEntry {
+// FindEnvsByFolder returns env entries matching the given folder.
+// Legacy entries created before folder tracking are matched by Name for compatibility.
+func (s *State) FindEnvsByFolder(folder string) []EnvEntry {
 	var matched []EnvEntry
 	for _, e := range s.Envs {
-		if e.Name == name {
+		if e.Folder == folder || (e.Folder == "" && e.Name == folder) {
 			matched = append(matched, e)
 		}
 	}
 	return matched
 }
 
-// RemoveEnvsByName removes all env entries matching the given folder/item name.
-func (s *State) RemoveEnvsByName(name string) {
+// FindEnvsByName returns all env entries matching the given folder/item name.
+// Kept for compatibility with older callers.
+func (s *State) FindEnvsByName(name string) []EnvEntry {
+	return s.FindEnvsByFolder(name)
+}
+
+// RemoveEnvsByFolder removes all env entries matching the given folder.
+// Legacy entries created before folder tracking are matched by Name for compatibility.
+func (s *State) RemoveEnvsByFolder(folder string) {
 	var kept []EnvEntry
 	for _, e := range s.Envs {
-		if e.Name != name {
+		if !(e.Folder == folder || (e.Folder == "" && e.Name == folder)) {
 			kept = append(kept, e)
 		}
 	}
 	s.Envs = kept
+}
+
+// RemoveEnvsByName removes all env entries matching the given folder/item name.
+// Kept for compatibility with older callers.
+func (s *State) RemoveEnvsByName(name string) {
+	s.RemoveEnvsByFolder(name)
 }
 
 // EnvItemIDsByRecency returns item IDs from env entries sorted by SetAt descending (most recent first).
@@ -229,28 +253,83 @@ func (e NoteEntry) IsSynced() bool {
 	return e.FilePath != ""
 }
 
-// FindSyncedNotesByFolder returns synced note entries for the given folder.
-func (s *State) FindSyncedNotesByFolder(folder string) []NoteEntry {
+// FindSyncedNotes returns synced note entries for the given folder.
+// When targetDir is non-empty, only entries for that target directory are returned.
+func (s *State) FindSyncedNotes(folder, targetDir string) []NoteEntry {
 	var matched []NoteEntry
 	for _, e := range s.Notes {
-		if e.IsSynced() && e.Folder == folder {
-			matched = append(matched, e)
+		if !e.IsSynced() || e.Folder != folder {
+			continue
 		}
+		if targetDir != "" && !noteEntryMatchesTarget(e, targetDir) {
+			continue
+		}
+		matched = append(matched, e)
 	}
 	return matched
+}
+
+// FindSyncedNotesByFolder returns synced note entries for the given folder.
+func (s *State) FindSyncedNotesByFolder(folder string) []NoteEntry {
+	return s.FindSyncedNotes(folder, "")
+}
+
+// FindNoteEntry returns the tracked note entry for the given item within a folder/target dir.
+func (s *State) FindNoteEntry(itemID, folder, targetDir string) *NoteEntry {
+	for i, e := range s.Notes {
+		if e.ItemID == itemID && e.Folder == folder && noteEntryMatchesTarget(e, targetDir) {
+			return &s.Notes[i]
+		}
+	}
+	return nil
 }
 
 // AddNote records a synced note.
 func (s *State) AddNote(entry NoteEntry) {
 	entry.SyncedAt = time.Now().Format(time.RFC3339)
-	// Replace existing entry for same item
+	// Replace existing entry for same item within the same folder/target dir.
 	for i, e := range s.Notes {
-		if e.ItemID == entry.ItemID {
+		if e.ItemID == entry.ItemID && e.Folder == entry.Folder && e.TargetDir == entry.TargetDir {
 			s.Notes[i] = entry
 			return
 		}
 	}
 	s.Notes = append(s.Notes, entry)
+}
+
+// RemoveNoteForTarget removes a note entry by itemID within the given folder/target dir.
+func (s *State) RemoveNoteForTarget(itemID, folder, targetDir string) {
+	var kept []NoteEntry
+	for _, e := range s.Notes {
+		if !(e.ItemID == itemID && e.Folder == folder && noteEntryMatchesTarget(e, targetDir)) {
+			kept = append(kept, e)
+		}
+	}
+	s.Notes = kept
+}
+
+// RemoveNotesByTarget removes all note entries for the given folder/target dir.
+func (s *State) RemoveNotesByTarget(folder, targetDir string) {
+	var kept []NoteEntry
+	for _, e := range s.Notes {
+		if !(e.Folder == folder && noteEntryMatchesTarget(e, targetDir)) {
+			kept = append(kept, e)
+		}
+	}
+	s.Notes = kept
+}
+
+func noteEntryMatchesTarget(entry NoteEntry, targetDir string) bool {
+	if targetDir == "" {
+		return entry.TargetDir == ""
+	}
+	if entry.TargetDir != "" {
+		return entry.TargetDir == targetDir
+	}
+	if entry.FilePath == "" {
+		return false
+	}
+	return filepath.Dir(entry.FilePath) == targetDir
 }
 
 // AddStoredSSHKey records a key stored in Bitwarden.

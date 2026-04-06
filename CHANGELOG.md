@@ -7,24 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [v0.3.0] - TBD
+## [v0.3.0] - 2026-04-06
 
 ### Added
-- `pkv note <folder> list` - List Secure Notes in a Bitwarden folder
-- `pkv note <folder> add --name <name> [--file <path>]` - Create Secure Note (via file or $EDITOR)
-- `pkv note <folder> remove <id>` - Delete Secure Note from Bitwarden
-- `pkv note <folder> edit <name-or-id>` - Edit Secure Note content in $EDITOR
-- `pkv env <folder> list` - List environment variable Notes
-- `pkv env <folder> add --name <name> [--file <path>]` - Create environment variable Note
-- `pkv env <folder> remove <id>` - Delete environment variable Note from Bitwarden
-- `pkv env <folder> edit <name-or-id>` - Edit environment variable Note
-- $EDITOR support for interactive editing with fallback to vi (Unix) / notepad (Windows)
-- Item resolution by both name and ID (name takes precedence)
-- Comprehensive unit tests for securenote operations (36+ test cases)
+- `pkv list [folder]` 用于列出 Bitwarden folders 或单个 folder 内的资源
+- 统一的 `pkv get|add|edit|remove|clean <folder> <ssh|env|note>` 资源命令模型
+- 直接执行 `pkv` 进入交互模式，并在同一进程内复用 `BW_SESSION`
+- `pkv get <folder> env` 生成 `~/.pkv/env/<folder>.json|.sh|.ps1` 三类 env 产物
+- SSH 与 Note 同步的远端对齐能力，包括远端删除清理与重命名跟随
+- 基于内容哈希和目标目录的 Note 状态追踪与本地冲突保护
+- 新增 shell 解析、env 产物、note 对齐行为相关测试
 
 ### Changed
-- Refactored `pkv note` and `pkv env` to support subcommands (add/list/remove/edit)
-- `pkv note <folder>` and `pkv env <folder>` now default to sync/deploy (consistent with v0.2.2)
+- `pkv.env` 成为 folder 级 env 数据的保留 Secure Note 名称，兼容历史 `pkv_type=env` 标记
+- `pkv get <folder> env` 改为只生成本地文件，不再持久写入系统环境变量
+- `pkv get <folder> note` 改为按 `folder + targetDir + itemID` 对齐，并拒绝覆盖本地已修改文件
+- SSH 部署会根据状态追踪重建 `known_hosts`，并回收远端已删除的本地 key
+- Secure Note 创建与更新流程改为返回结构化 item ID，便于状态管理与后续操作
+- 发布流程改为以 `version.json` 为单一版本来源，避免推送后再次自动改写版本号
+
+### Removed
+- 旧的 `pkv ssh`、`pkv env`、`pkv note` 命令层级
+- 直接修改系统持久环境变量及相关 snapshot / 平台适配实现
 
 ## [v0.2.3] - 2026-03-29
 

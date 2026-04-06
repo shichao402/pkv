@@ -8,6 +8,10 @@ const (
 	ItemTypeSSHKey     = 5
 )
 
+// ReservedEnvNoteName is the single Secure Note name used for folder-level env data.
+// Other Secure Notes in the same folder are treated as config files to sync locally.
+const ReservedEnvNoteName = "pkv.env"
+
 // PKV type constants for the "pkv_type" custom field in Bitwarden.
 // This field is used to distinguish between env and note items
 // when both are stored as Secure Notes.
@@ -69,6 +73,18 @@ func (item *Item) PKVType() string {
 // IsEnv returns true if the item is explicitly marked as an env item.
 func (item *Item) IsEnv() bool {
 	return item.PKVType() == PKVTypeEnv
+}
+
+// IsReservedEnvNote returns true if the item uses PKV's reserved folder-level env note name.
+func (item *Item) IsReservedEnvNote() bool {
+	return item.Type == ItemTypeSecureNote && item.Name == ReservedEnvNoteName
+}
+
+// IsManagedEnvNote returns true if the item should be treated as the folder-level env note.
+// The reserved name is the primary convention; the legacy pkv_type=env marker is still accepted
+// so existing vault data continues to work during migration.
+func (item *Item) IsManagedEnvNote() bool {
+	return item.IsReservedEnvNote() || (item.Type == ItemTypeSecureNote && item.IsEnv())
 }
 
 // GetHosts extracts host entries from the item's Notes field.

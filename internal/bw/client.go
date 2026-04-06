@@ -33,15 +33,15 @@ func (c *Client) EnsureUnlocked() (string, error) {
 		if err := c.login(); err != nil {
 			return "", err
 		}
-		return c.unlock()
+		return c.unlockAndCache()
 	case "locked":
-		return c.unlock()
+		return c.unlockAndCache()
 	case "unlocked":
 		// Already unlocked, get session from env or unlock again
 		if session := os.Getenv("BW_SESSION"); session != "" {
 			return session, nil
 		}
-		return c.unlock()
+		return c.unlockAndCache()
 	default:
 		return "", fmt.Errorf("unknown bw status: %s", status.Status)
 	}
@@ -51,6 +51,20 @@ func (c *Client) EnsureUnlocked() (string, error) {
 func (c *Client) Sync(session string) error {
 	_, err := c.run(session, "sync")
 	return err
+}
+
+// ListFolders returns all folders in the vault.
+func (c *Client) ListFolders(session string) ([]types.Folder, error) {
+	out, err := c.run(session, "list", "folders")
+	if err != nil {
+		return nil, err
+	}
+
+	var folders []types.Folder
+	if err := json.Unmarshal([]byte(out), &folders); err != nil {
+		return nil, fmt.Errorf("failed to parse folders: %w", err)
+	}
+	return folders, nil
 }
 
 // GetFolderID returns the folder ID for the given folder name.
@@ -160,13 +174,14 @@ func FilterSecureNotes(items []types.Item) []types.Item {
 }
 
 // FilterEnvNotes returns Secure Notes that are explicitly marked with pkv_type=env.
-// Items without the pkv_type field or with a different value are excluded.
+// The reserved name "pkv.env" is the primary convention; the legacy pkv_type=env
+// marker is still accepted for compatibility during migration.
 func FilterEnvNotes(items []types.Item) (matched, skipped []types.Item) {
 	for _, item := range items {
 		if item.Type != types.ItemTypeSecureNote {
 			continue
 		}
-		if item.IsEnv() {
+		if item.IsManagedEnvNote() {
 			matched = append(matched, item)
 		} else {
 			skipped = append(skipped, item)
@@ -175,16 +190,34 @@ func FilterEnvNotes(items []types.Item) (matched, skipped []types.Item) {
 	return
 }
 
-// FilterNonEnvNotes returns Secure Notes that are NOT marked as pkv_type=env.
-// This includes notes with no pkv_type field or any value other than "env".
+// FindManagedEnvNote returns the single folder-level env note.
+// Returns (zero, false, nil) when the folder has no env note.
+func FindManagedEnvNote(items []types.Item) (types.Item, bool, error) {
+	envNotes, _ := FilterEnvNotes(items)
+	switch len(envNotes) {
+	case 0:
+		return types.Item{}, false, nil
+	case 1:
+		return envNotes[0], true, nil
+	default:
+		return types.Item{}, false, fmt.Errorf("found %d env notes in one folder; keep only one Secure Note named '%s'", len(envNotes), types.ReservedEnvNoteName)
+	}
+}
+
+// FilterNonEnvNotes returns Secure Notes that are not treated as the folder-level env note.
 func FilterNonEnvNotes(items []types.Item) []types.Item {
 	var result []types.Item
 	for _, item := range items {
-		if item.Type == types.ItemTypeSecureNote && !item.IsEnv() {
+		if item.Type == types.ItemTypeSecureNote && !item.IsManagedEnvNote() {
 			result = append(result, item)
 		}
 	}
 	return result
+}
+
+// FilterConfigNotes returns config-file notes stored as regular Secure Notes.
+func FilterConfigNotes(items []types.Item) []types.Item {
+	return FilterNonEnvNotes(items)
 }
 
 func (c *Client) getStatus() (*types.Status, error) {
@@ -222,6 +255,15 @@ func (c *Client) unlock() (string, error) {
 	if session == "" {
 		return "", fmt.Errorf("bw unlock returned empty session")
 	}
+	return session, nil
+}
+
+func (c *Client) unlockAndCache() (string, error) {
+	session, err := c.unlock()
+	if err != nil {
+		return "", err
+	}
+	_ = os.Setenv("BW_SESSION", session)
 	return session, nil
 }
 
