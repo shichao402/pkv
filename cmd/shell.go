@@ -1,24 +1,38 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 
+	"github.com/chzyer/readline"
 	"github.com/spf13/cobra"
+
+	"github.com/shichao402/pkv/internal/diag"
 )
 
 func runShell(_ *cobra.Command, _ []string) error {
-	reader := bufio.NewReader(os.Stdin)
+	rl, err := newShellReadline()
+	if err != nil {
+		return fmt.Errorf("initialize interactive shell: %w", err)
+	}
+	defer rl.Close()
+	rl.CaptureExitSignal()
+
 	fmt.Println("Interactive mode. Type 'help' for commands, 'exit' to quit.")
+	fmt.Println("Examples: 'get dev env', 'dev get env', or 'dev env'.")
 
 	for {
-		fmt.Print("pkv> ")
-		line, err := reader.ReadString('\n')
-		if err != nil && err != io.EOF {
+		line, err := rl.Readline()
+		if err == readline.ErrInterrupt {
+			if strings.TrimSpace(line) == "" {
+				fmt.Println()
+				continue
+			}
+		} else if err != nil && err != io.EOF {
 			return err
 		}
 
@@ -43,6 +57,7 @@ func runShell(_ *cobra.Command, _ []string) error {
 		if len(args) > 0 && args[0] == "pkv" {
 			args = args[1:]
 		}
+		diag.Printf("shell parsed input %q -> %v", line, args)
 		if len(args) == 0 {
 			if err == io.EOF {
 				return nil
@@ -55,8 +70,10 @@ func runShell(_ *cobra.Command, _ []string) error {
 		case "exit", "quit":
 			return nil
 		case "help":
+			diag.Printf("shell dispatching built-in help")
 			rootCmd.SetArgs([]string{"--help"})
 		case "list", "get", "add", "edit", "remove", "clean", "update", "completion", "version":
+			diag.Printf("shell executing direct command %v", args)
 			rootCmd.SetArgs(args)
 		default:
 			translated, translateErr := translateShellArgs(args)
@@ -67,6 +84,7 @@ func runShell(_ *cobra.Command, _ []string) error {
 				}
 				continue
 			}
+			diag.Printf("shell translated command %v -> %v", args, translated)
 			rootCmd.SetArgs(translated)
 		}
 
@@ -80,6 +98,37 @@ func runShell(_ *cobra.Command, _ []string) error {
 	}
 }
 
+func newShellReadline() (*readline.Instance, error) {
+	historyPath, err := shellHistoryPath()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(historyPath), 0o700); err != nil {
+		return nil, fmt.Errorf("prepare shell history directory: %w", err)
+	}
+
+	return readline.NewEx(&readline.Config{
+		Prompt:            "pkv> ",
+		HistoryFile:       historyPath,
+		HistorySearchFold: true,
+		InterruptPrompt:   "",
+		EOFPrompt:         "",
+	})
+}
+
+func shellHistoryPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return shellHistoryPathFromHome(home), nil
+}
+
+func shellHistoryPathFromHome(home string) string {
+	return filepath.Join(home, ".pkv", "shell_history")
+}
+
 func resetShellCommandState() {
 	addSSHPrivFlag = ""
 	addSSHPubFlag = ""
@@ -89,37 +138,64 @@ func resetShellCommandState() {
 
 func translateShellArgs(args []string) ([]string, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("usage: <folder> <command>")
+		return nil, fmt.Errorf("usage: <folder> <list|get|add|edit|remove|clean|ssh|env|note> ...")
 	}
 	folder := args[0]
-	verb := args[1]
+	second := args[1]
 	rest := args[2:]
 
-	switch verb {
-	case "list":
+	switch {
+	case second == "list":
+		if len(rest) > 0 {
+			return nil, fmt.Errorf("usage: <folder> list")
+		}
 		return []string{"list", folder}, nil
-	case "ssh", "env", "note":
-		if len(rest) == 0 {
-			return []string{"get", folder, verb}, nil
-		}
-		action := rest[0]
-		tail := rest[1:]
-		switch action {
-		case "get":
-			return []string{"get", folder, verb}, nil
-		case "add":
-			return append([]string{"add", folder, verb}, tail...), nil
-		case "edit":
-			return append([]string{"edit", folder, verb}, tail...), nil
-		case "remove":
-			return append([]string{"remove", folder, verb}, tail...), nil
-		case "clean":
-			return []string{"clean", folder, verb}, nil
-		default:
-			return nil, fmt.Errorf("unknown action: %s", action)
-		}
+	case isShellResourceKind(second):
+		return translateResourceFirstArgs(folder, second, rest)
+	case isShellResourceAction(second):
+		return translateActionFirstArgs(folder, second, rest)
 	default:
-		return nil, fmt.Errorf("unknown command: %s", verb)
+		return nil, fmt.Errorf("unknown command: %s", second)
+	}
+}
+
+func translateResourceFirstArgs(folder, kind string, rest []string) ([]string, error) {
+	if len(rest) == 0 {
+		return []string{"get", folder, kind}, nil
+	}
+	action := rest[0]
+	if !isShellResourceAction(action) {
+		return nil, fmt.Errorf("unknown action: %s", action)
+	}
+	return append([]string{action, folder, kind}, rest[1:]...), nil
+}
+
+func translateActionFirstArgs(folder, action string, rest []string) ([]string, error) {
+	if len(rest) == 0 {
+		return nil, fmt.Errorf("usage: <folder> %s <ssh|env|note>", action)
+	}
+	kind := rest[0]
+	if !isShellResourceKind(kind) {
+		return nil, fmt.Errorf("unknown resource type: %s (expected ssh, env, or note)", kind)
+	}
+	return append([]string{action, folder, kind}, rest[1:]...), nil
+}
+
+func isShellResourceKind(s string) bool {
+	switch s {
+	case "ssh", "env", "note":
+		return true
+	default:
+		return false
+	}
+}
+
+func isShellResourceAction(s string) bool {
+	switch s {
+	case "get", "add", "edit", "remove", "clean":
+		return true
+	default:
+		return false
 	}
 }
 

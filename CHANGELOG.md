@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-04-06
+
+### Added
+- 交互模式支持历史记录、方向键切换与 `Ctrl+R` 反向搜索
+- 交互模式支持 `dev get env`、`dev remove note <id>` 这类 folder 在前的写法
+- 新增 `PKV_DEBUG=1` 脱敏诊断日志能力，覆盖 shell、Bitwarden 会话与 env 产物部署路径
+- 新增导出 `BW_SESSION` 复用、失效重试与交互 shell 翻译相关测试
+
+### Changed
+- Bitwarden 客户端会先校验并复用导出的 `BW_SESSION`，失效时自动回退到交互式解锁流程
+- `bw` 调用统一改为显式 `--nointeraction` / `--session` 形式，错误上下文与调试信息更清晰
+- README 补充了交互模式快捷操作、失效 session 排查和调试日志说明
+
 ## [v0.3.0] - 2026-04-06
 
 ### Added

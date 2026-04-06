@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/shichao402/pkv/internal/bw/types"
+	"github.com/shichao402/pkv/internal/diag"
 	"github.com/shichao402/pkv/internal/state"
 )
 
@@ -80,6 +81,7 @@ func stripQuotes(value string, _ int) string {
 func (d *Deployer) Deploy(folder string, item types.Item) (state.EnvEntry, error) {
 	vars, err := ParseEnvVars(item.Notes)
 	if err != nil {
+		diag.Printf("failed to parse env note for folder %q item %q (%s): %v", folder, item.Name, item.ID, err)
 		return state.EnvEntry{}, fmt.Errorf("parse '%s': %w", item.Name, err)
 	}
 
@@ -96,6 +98,9 @@ func (d *Deployer) Deploy(folder string, item types.Item) (state.EnvEntry, error
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Key < sorted[j].Key
 	})
+
+	diag.Printf("deploying env artifacts for folder %q item %q (%s): %d vars", folder, item.Name, item.ID, len(sorted))
+	diag.Printf("env artifact targets: json=%q shell=%q powershell=%q", jsonPath, shellPath, powerShellPath)
 
 	if err := writeJSONArtifact(jsonPath, sorted); err != nil {
 		return state.EnvEntry{}, err
@@ -122,6 +127,7 @@ func (d *Deployer) Deploy(folder string, item types.Item) (state.EnvEntry, error
 		PowerShellPath: powerShellPath,
 	}
 	d.state.AddEnv(entry)
+	diag.Printf("env artifacts written for folder %q", folder)
 	return entry, nil
 }
 
@@ -141,6 +147,7 @@ func (d *Deployer) Remove(entry state.EnvEntry) error {
 		powerShellPath = entry.PowerShellPath
 	}
 
+	diag.Printf("removing env artifacts for folder %q: json=%q shell=%q powershell=%q", entryFolder(entry), jsonPath, shellPath, powerShellPath)
 	var errs []string
 	for _, path := range []string{jsonPath, shellPath, powerShellPath} {
 		if path == "" {
@@ -151,6 +158,7 @@ func (d *Deployer) Remove(entry state.EnvEntry) error {
 		}
 	}
 	if len(errs) > 0 {
+		diag.Printf("failed to remove env artifacts for folder %q: %s", entryFolder(entry), strings.Join(errs, "; "))
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return nil

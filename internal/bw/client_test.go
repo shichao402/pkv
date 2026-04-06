@@ -1,6 +1,12 @@
 package bw
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/shichao402/pkv/internal/bw/types"
@@ -258,4 +264,170 @@ func TestBaseEncode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnsureUnlockedReusesExportedSession(t *testing.T) {
+	t.Setenv("BW_SESSION", "valid-session")
+	logPath := filepath.Join(t.TempDir(), "bw.log")
+
+	client := NewClient()
+	client.execCommand = newTestBWExecCommand(t, "reuse_exported_session", logPath)
+
+	session, err := client.EnsureUnlocked()
+	if err != nil {
+		t.Fatalf("EnsureUnlocked() error = %v", err)
+	}
+	if session != "valid-session" {
+		t.Fatalf("EnsureUnlocked() session = %q, want %q", session, "valid-session")
+	}
+
+	if got := readTestBWCalls(t, logPath); !reflect.DeepEqual(got, []string{
+		"bw --nointeraction --session valid-session list folders|env=valid-session",
+	}) {
+		t.Fatalf("bw calls = %#v", got)
+	}
+}
+
+func TestEnsureUnlockedRefreshesExpiredExportedSession(t *testing.T) {
+	t.Setenv("BW_SESSION", "expired-session")
+	logPath := filepath.Join(t.TempDir(), "bw.log")
+
+	client := NewClient()
+	client.execCommand = newTestBWExecCommand(t, "refresh_expired_session", logPath)
+
+	session, err := client.EnsureUnlocked()
+	if err != nil {
+		t.Fatalf("EnsureUnlocked() error = %v", err)
+	}
+	if session != "fresh-session" {
+		t.Fatalf("EnsureUnlocked() session = %q, want %q", session, "fresh-session")
+	}
+	if got := os.Getenv("BW_SESSION"); got != "fresh-session" {
+		t.Fatalf("BW_SESSION = %q, want %q", got, "fresh-session")
+	}
+
+	if got := readTestBWCalls(t, logPath); !reflect.DeepEqual(got, []string{
+		"bw --nointeraction --session expired-session list folders|env=expired-session",
+		"bw --nointeraction status|env=",
+		"bw unlock --raw|env=",
+	}) {
+		t.Fatalf("bw calls = %#v", got)
+	}
+}
+
+func TestEnsureUnlockedReturnsExportedSessionValidationError(t *testing.T) {
+	t.Setenv("BW_SESSION", "flaky-session")
+	logPath := filepath.Join(t.TempDir(), "bw.log")
+
+	client := NewClient()
+	client.execCommand = newTestBWExecCommand(t, "exported_session_network_error", logPath)
+
+	_, err := client.EnsureUnlocked()
+	if err == nil {
+		t.Fatal("EnsureUnlocked() expected error")
+	}
+	if !strings.Contains(err.Error(), "validate exported BW_SESSION") {
+		t.Fatalf("EnsureUnlocked() error = %v, want exported session validation context", err)
+	}
+
+	if got := readTestBWCalls(t, logPath); !reflect.DeepEqual(got, []string{
+		"bw --nointeraction --session flaky-session list folders|env=flaky-session",
+	}) {
+		t.Fatalf("bw calls = %#v", got)
+	}
+}
+
+func newTestBWExecCommand(t *testing.T, scenario, logPath string) execCommandFunc {
+	t.Helper()
+	return func(name string, args ...string) *exec.Cmd {
+		cmdArgs := append([]string{"-test.run=TestClientHelperProcess", "--", name}, args...)
+		cmd := exec.Command(os.Args[0], cmdArgs...)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_HELPER_PROCESS=1",
+			"PKV_TEST_BW_SCENARIO="+scenario,
+			"PKV_TEST_BW_LOG="+logPath,
+		)
+		return cmd
+	}
+}
+
+func readTestBWCalls(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read bw log: %v", err)
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
+}
+
+func TestClientHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+
+	args := os.Args
+	sep := -1
+	for i, arg := range args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep == -1 || sep+1 >= len(args) {
+		fmt.Fprintln(os.Stderr, "missing helper args")
+		os.Exit(2)
+	}
+
+	bwArgs := args[sep+1:]
+	if bwArgs[0] != "bw" {
+		fmt.Fprintf(os.Stderr, "unexpected command: %q\n", bwArgs[0])
+		os.Exit(2)
+	}
+
+	logPath := os.Getenv("PKV_TEST_BW_LOG")
+	if logPath != "" {
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open log: %v\n", err)
+			os.Exit(2)
+		}
+		_, _ = fmt.Fprintf(f, "bw %s|env=%s\n", strings.Join(bwArgs[1:], " "), os.Getenv("BW_SESSION"))
+		_ = f.Close()
+	}
+
+	joined := strings.Join(bwArgs[1:], " ")
+	switch os.Getenv("PKV_TEST_BW_SCENARIO") {
+	case "reuse_exported_session":
+		if joined == "--nointeraction --session valid-session list folders" {
+			fmt.Fprint(os.Stdout, `[{"id":"folder-1","name":"dev"}]`)
+			os.Exit(0)
+		}
+	case "refresh_expired_session":
+		switch joined {
+		case "--nointeraction --session expired-session list folders":
+			fmt.Fprint(os.Stderr, "Vault is locked.\n")
+			os.Exit(1)
+		case "--nointeraction status":
+			fmt.Fprint(os.Stdout, `{"status":"locked","userEmail":"dev@example.com"}`)
+			os.Exit(0)
+		case "unlock --raw":
+			fmt.Fprint(os.Stdout, "fresh-session\n")
+			os.Exit(0)
+		}
+	case "exported_session_network_error":
+		if joined == "--nointeraction --session flaky-session list folders" {
+			fmt.Fprint(os.Stderr, "network unreachable\n")
+			os.Exit(1)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "unexpected bw args for %s: %q\n", os.Getenv("PKV_TEST_BW_SCENARIO"), joined)
+	os.Exit(2)
 }

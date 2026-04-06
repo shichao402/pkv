@@ -1,9 +1,19 @@
 package cmd
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 )
+
+func TestShellHistoryPathFromHome(t *testing.T) {
+	home := "/tmp/pkv-home"
+	want := filepath.Join(home, ".pkv", "shell_history")
+
+	if got := shellHistoryPathFromHome(home); got != want {
+		t.Fatalf("shellHistoryPathFromHome() = %q, want %q", got, want)
+	}
+}
 
 func TestParseShellArgs(t *testing.T) {
 	tests := []struct {
@@ -78,6 +88,16 @@ func TestTranslateShellArgs(t *testing.T) {
 			want: []string{"get", "prod", "ssh"},
 		},
 		{
+			name: "folder action-first get env",
+			args: []string{"prod", "get", "env"},
+			want: []string{"get", "prod", "env"},
+		},
+		{
+			name: "folder action-first remove note",
+			args: []string{"prod", "remove", "note", "id-1"},
+			want: []string{"remove", "prod", "note", "id-1"},
+		},
+		{
 			name: "explicit clean env",
 			args: []string{"prod", "env", "clean"},
 			want: []string{"clean", "prod", "env"},
@@ -95,6 +115,11 @@ func TestTranslateShellArgs(t *testing.T) {
 		{
 			name:    "unknown action",
 			args:    []string{"prod", "note", "sync"},
+			wantErr: true,
+		},
+		{
+			name:    "unknown resource type in action-first form",
+			args:    []string{"prod", "get", "secret"},
 			wantErr: true,
 		},
 		{

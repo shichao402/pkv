@@ -9,12 +9,17 @@ import (
 	"strings"
 
 	"github.com/shichao402/pkv/internal/bw/types"
+	"github.com/shichao402/pkv/internal/diag"
 )
 
-type Client struct{}
+type execCommandFunc func(name string, args ...string) *exec.Cmd
+
+type Client struct {
+	execCommand execCommandFunc
+}
 
 func NewClient() *Client {
-	return &Client{}
+	return &Client{execCommand: exec.Command}
 }
 
 // EnsureUnlocked checks bw status, logs in if needed, unlocks vault, returns session key.
@@ -23,24 +28,46 @@ func (c *Client) EnsureUnlocked() (string, error) {
 		return "", err
 	}
 
+	if session := strings.TrimSpace(os.Getenv("BW_SESSION")); session != "" {
+		diag.Printf("found BW_SESSION in environment: %s", diag.RedactSecret(session))
+		if err := c.validateSession(session); err == nil {
+			diag.Printf("reusing exported BW_SESSION")
+			_ = os.Setenv("BW_SESSION", session)
+			return session, nil
+		} else {
+			diag.Printf("exported BW_SESSION is not reusable: %v", err)
+			if !shouldRetryWithoutExportedSession(err) {
+				return "", fmt.Errorf("validate exported BW_SESSION: %w", err)
+			}
+			_ = os.Unsetenv("BW_SESSION")
+			diag.Printf("cleared invalid exported BW_SESSION before retrying interactive flow")
+		}
+	} else {
+		diag.Printf("BW_SESSION not set in environment")
+	}
+
 	status, err := c.getStatus()
 	if err != nil {
 		return "", fmt.Errorf("failed to get bw status: %w", err)
 	}
+	diag.Printf("bw status=%q account=%q", status.Status, status.UserEmail)
 
 	switch status.Status {
 	case "unauthenticated":
+		diag.Printf("bw status unauthenticated, starting interactive login")
 		if err := c.login(); err != nil {
 			return "", err
 		}
 		return c.unlockAndCache()
 	case "locked":
+		diag.Printf("bw status locked, starting interactive unlock")
 		return c.unlockAndCache()
 	case "unlocked":
-		// Already unlocked, get session from env or unlock again
-		if session := os.Getenv("BW_SESSION"); session != "" {
+		if session := strings.TrimSpace(os.Getenv("BW_SESSION")); session != "" {
+			diag.Printf("bw status unlocked and BW_SESSION still present: %s", diag.RedactSecret(session))
 			return session, nil
 		}
+		diag.Printf("bw status unlocked but BW_SESSION missing, refreshing session interactively")
 		return c.unlockAndCache()
 	default:
 		return "", fmt.Errorf("unknown bw status: %s", status.Status)
@@ -221,10 +248,15 @@ func FilterConfigNotes(items []types.Item) []types.Item {
 }
 
 func (c *Client) getStatus() (*types.Status, error) {
-	cmd := exec.Command("bw", "status")
-	cmd.Env = append(os.Environ(), "BW_NOINTERACTION=true")
+	cmd := c.command("--nointeraction", "status")
 	out, err := cmd.Output()
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := strings.TrimSpace(string(exitErr.Stderr))
+			diag.Printf("bw status failed: %s", stderr)
+			return nil, fmt.Errorf("bw status failed: %s", stderr)
+		}
+		diag.Printf("bw status failed: %v", err)
 		return nil, fmt.Errorf("bw status failed: %w", err)
 	}
 
@@ -236,7 +268,8 @@ func (c *Client) getStatus() (*types.Status, error) {
 }
 
 func (c *Client) login() error {
-	cmd := exec.Command("bw", "login")
+	diag.Printf("running interactive bw login")
+	cmd := c.command("login")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -244,7 +277,8 @@ func (c *Client) login() error {
 }
 
 func (c *Client) unlock() (string, error) {
-	cmd := exec.Command("bw", "unlock", "--raw")
+	diag.Printf("running interactive bw unlock")
+	cmd := c.command("unlock", "--raw")
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
@@ -255,6 +289,7 @@ func (c *Client) unlock() (string, error) {
 	if session == "" {
 		return "", fmt.Errorf("bw unlock returned empty session")
 	}
+	diag.Printf("bw unlock returned session %s", diag.RedactSecret(session))
 	return session, nil
 }
 
@@ -264,18 +299,70 @@ func (c *Client) unlockAndCache() (string, error) {
 		return "", err
 	}
 	_ = os.Setenv("BW_SESSION", session)
+	diag.Printf("cached BW_SESSION in current process: %s", diag.RedactSecret(session))
 	return session, nil
 }
 
 func (c *Client) run(session string, args ...string) (string, error) {
-	cmd := exec.Command("bw", args...)
-	cmd.Env = append(os.Environ(), "BW_SESSION="+session)
+	summary := summarizeBWCommand(args)
+	diag.Printf("running bw command %q with session %s", summary, diag.RedactSecret(session))
+	cmdArgs := []string{"--nointeraction"}
+	if session = strings.TrimSpace(session); session != "" {
+		cmdArgs = append(cmdArgs, "--session", session)
+	}
+	cmdArgs = append(cmdArgs, args...)
+	cmd := c.command(cmdArgs...)
 	out, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("bw %s failed: %s", args[0], string(exitErr.Stderr))
+			stderr := strings.TrimSpace(string(exitErr.Stderr))
+			diag.Printf("bw command %q failed: %s", summary, stderr)
+			return "", fmt.Errorf("bw %s failed: %s", args[0], stderr)
 		}
+		diag.Printf("bw command %q failed: %v", summary, err)
 		return "", fmt.Errorf("bw %s failed: %w", args[0], err)
 	}
+	diag.Printf("bw command %q succeeded (%d bytes)", summary, len(out))
 	return string(out), nil
+}
+
+func (c *Client) validateSession(session string) error {
+	_, err := c.run(session, "list", "folders")
+	return err
+}
+
+func (c *Client) command(args ...string) *exec.Cmd {
+	if c.execCommand == nil {
+		c.execCommand = exec.Command
+	}
+	return c.execCommand("bw", args...)
+}
+
+func summarizeBWCommand(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	if len(args) == 1 {
+		return args[0]
+	}
+	return strings.Join(args[:2], " ")
+}
+
+func shouldRetryWithoutExportedSession(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"vault is locked",
+		"not authenticated",
+		"session key",
+		"invalid session",
+		"logged out",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }

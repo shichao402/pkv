@@ -32,10 +32,16 @@ pkv update
 ```text
 $ pkv
 Interactive mode. Type 'help' for commands, 'exit' to quit.
+Examples: 'get dev env', 'dev get env', or 'dev env'.
 pkv>
 ```
 
 交互模式里同一个 `pkv` 进程会把 `BW_SESSION` 保持在内存中，所以你在一次会话里连续执行多条命令，不需要每次都重新输入主密码。
+
+现在也支持常见终端操作：
+
+- `↑` / `↓` 切换历史命令
+- `Ctrl+R` 反向搜索历史命令
 
 ## 安装
 
@@ -216,6 +222,13 @@ pkv> list prod
 pkv> get prod ssh
 pkv> get prod env
 pkv> get prod note
+```
+
+也支持 folder 在前的写法：
+
+```text
+pkv> dev get env
+pkv> dev remove note 3b8d1c2e-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
 ### 简写命令
@@ -500,6 +513,27 @@ make release
 
 先安装 Bitwarden CLI，并确保 `bw` 在 PATH 中。
 
+### 交互模式里 `BW_SESSION` 明明导出了，还是提示输入主密码
+
+先确认导出的 session 还有效：
+
+```bash
+bw --nointeraction --session "$BW_SESSION" list folders
+```
+
+如果输出类似 `Vault is locked.`，说明这段 session 已经失效，重新执行：
+
+```bash
+export BW_SESSION="$(bw unlock --raw)"
+```
+
+然后再进交互模式：
+
+```bash
+PKV_DEBUG=1 pkv
+pkv> dev get env
+```
+
 ### `pkv get <folder> note` 报文件冲突
 
 通常有两种情况：
@@ -520,6 +554,10 @@ make release
 - `pkv list <folder>` 看远端是否真的有目标 key
 - SSH Key 的 `Notes` 是否正确填写了 host / host:port
 - `~/.ssh/config` 里是否生成了 PKV 管理区块
+
+### 打开排查日志
+
+设置 `PKV_DEBUG=1` 后，PKV 会输出脱敏诊断日志，例如会话是否被复用、执行了哪类 Bitwarden 命令、env 产物写到了哪些路径，但不会打印 `BW_SESSION`、私钥或 env value 原文。
 
 ## 更新
 
