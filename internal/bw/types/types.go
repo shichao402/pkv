@@ -1,5 +1,7 @@
 package types
 
+import "strings"
+
 const (
 	ItemTypeLogin      = 1
 	ItemTypeSecureNote = 2
@@ -18,6 +20,18 @@ const ReservedEnvNoteName = "pkv.env"
 const (
 	PKVFieldName = "pkv_type"
 	PKVTypeEnv   = "env"
+)
+
+// Note metadata field names for controlling how config notes land locally.
+const (
+	PKVNoteStrategyFieldName = "pkv_note_strategy"
+	PKVNoteTargetFieldName   = "pkv_note_target"
+)
+
+// Supported note landing strategies.
+const (
+	NoteStrategyFile      = "file"
+	NoteStrategyMiseConfD = "mise_conf_d"
 )
 
 type Status struct {
@@ -85,6 +99,28 @@ func (item *Item) IsReservedEnvNote() bool {
 // so existing vault data continues to work during migration.
 func (item *Item) IsManagedEnvNote() bool {
 	return item.IsReservedEnvNote() || (item.Type == ItemTypeSecureNote && item.IsEnv())
+}
+
+// NormalizeNoteStrategy trims and canonicalizes note strategy values.
+func NormalizeNoteStrategy(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	return value
+}
+
+// NoteStrategy returns the configured note landing strategy.
+// Empty values fall back to the default single-file behavior.
+func (item *Item) NoteStrategy() string {
+	strategy := NormalizeNoteStrategy(item.GetCustomField(PKVNoteStrategyFieldName))
+	if strategy == "" {
+		return NoteStrategyFile
+	}
+	return strategy
+}
+
+// NoteTargetPath returns the optional local target override for a config note.
+func (item *Item) NoteTargetPath() string {
+	return strings.TrimSpace(item.GetCustomField(PKVNoteTargetFieldName))
 }
 
 // GetHosts extracts host entries from the item's Notes field.
