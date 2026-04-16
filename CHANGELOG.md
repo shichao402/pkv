@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.4.2] - 2026-04-16
+
+### Added
+- `pkv get <folder> note` 会在真正落盘前聚合冲突并一次性返回完整问题清单，失败时保证本地零副作用
+- 新增对 Note 冲突预检、同路径冲突、文件/目录形态冲突、已追踪文件重命名进子目录等场景的测试覆盖
+
+### Changed
+- `pkv get <folder> note` 继续保持“Secure Note 名称即目标相对路径”的简单模型，不引入额外的 per-note 策略字段
+- README 补充了 Note 路径与冲突处理说明，明确当前推荐用法
+
 ## [v0.4.1] - 2026-04-07
 
 ### Added
