@@ -127,16 +127,6 @@ REDIS_URL=redis://127.0.0.1:6379/0
 - 名称：目标文件名，例如 `app.secrets.json`、`.env.local`、`config.yaml`
 - 内容：文件正文
 
-可选元数据字段：
-
-- `pkv_note_strategy`：note 落盘策略，默认 `file`
-- `pkv_note_target`：显式覆盖本地目标路径
-
-当前支持的策略：
-
-- `file`：默认模式，沿用 note 名称或 `pkv_note_target` 作为落盘路径
-- `mise_conf_d`：要求目标落在 `.config/mise/conf.d/*.toml`，适合 mise 这类支持碎片目录的工具
-
 示例：
 
 - Note 名称：`app.secrets.json`
@@ -145,12 +135,6 @@ REDIS_URL=redis://127.0.0.1:6379/0
 `pkv get <folder> note` 会把这些 note 同步到当前目录，文件名直接使用 note 名称。
 如果 note 名称里包含路径，例如 `lyra/test/note`，就会按这个目录结构写到当前目录下。
 出于安全考虑，不允许使用绝对路径或 `..` 逃逸出当前目录。
-
-如果 note 设置了 `pkv_note_strategy=mise_conf_d`：
-
-- 默认会落到 `.config/mise/conf.d/pkv-<folder>-<note>.toml`
-- 也可以用 `pkv_note_target` 显式指定 `.config/mise/conf.d/*.toml`
-- 这样不同来源可以各写各的 fragment，避免都去争抢单个 `mise.toml` / `mise.local.toml`
 
 ## 快速上手
 
@@ -407,12 +391,6 @@ PKV 当前的规则是：
 - 你要改远端内容，应该用 `pkv edit <folder> note <name-or-id>`
 - 你要接受远端版本，先删除本地冲突文件，或者 `pkv clean <folder> note` 后再 `pkv get <folder> note`
 - 如果当前目录已经有一个**未被 PKV 追踪**的同名文件，PKV 也不会直接覆盖它
-
-如果某个 note 使用碎片化策略，例如 `pkv_note_strategy=mise_conf_d`：
-
-- PKV 仍然按同样的追踪和冲突规则工作
-- 但实际落点会变成 `.config/mise/conf.d/*.toml` 这类 fragment 文件
-- 这样多个来源可以各自拥有稳定片段，减少对单个原子配置文件的争抢
 
 状态追踪内容大致是：
 

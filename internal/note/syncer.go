@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/shichao402/pkv/internal/bw/types"
 	"github.com/shichao402/pkv/internal/state"
@@ -127,13 +126,12 @@ func (s *Syncer) planSync(items []types.Item, targetDir, folder string) (*syncPl
 }
 
 func validateTrackedRemoval(entry state.NoteEntry) error {
-	label := trackedEntryLabel(entry)
 	localHash, hasLocalFile, err := currentFileHash(entry.FilePath)
 	if err != nil {
-		return fmt.Errorf("read local stale note '%s': %w", label, err)
+		return fmt.Errorf("read local stale note '%s': %w", entry.FileName, err)
 	}
 	if hasLocalFile && entry.ContentHash != "" && localHash != entry.ContentHash {
-		return fmt.Errorf("local note '%s' was modified after last sync; refusing to remove it because the remote note is gone", label)
+		return fmt.Errorf("local note '%s' was modified after last sync; refusing to remove it because the remote note is gone", entry.FileName)
 	}
 	return nil
 }
@@ -143,12 +141,7 @@ func planWrite(item types.Item, entry state.NoteEntry, tracked bool, targetDir, 
 		return plannedWrite{}, []string{fmt.Sprintf("item '%s' has no note content", item.Name)}
 	}
 
-	targetName, err := resolveNoteTarget(item, folder)
-	if err != nil {
-		return plannedWrite{}, []string{fmt.Sprintf("prepare note '%s': %v", item.Name, err)}
-	}
-
-	filePath, err := resolveNotePath(targetDir, targetName)
+	filePath, err := resolveNotePath(targetDir, item.Name)
 	if err != nil {
 		return plannedWrite{}, []string{fmt.Sprintf("prepare note '%s': %v", item.Name, err)}
 	}
@@ -164,17 +157,16 @@ func planWrite(item types.Item, entry state.NoteEntry, tracked bool, targetDir, 
 		return write, nil
 	}
 
-	label := trackedEntryLabel(entry)
 	localHash, hasLocalFile, err := currentFileHash(entry.FilePath)
 	if err != nil {
-		return plannedWrite{}, []string{fmt.Sprintf("read local note '%s': %v", label, err)}
+		return plannedWrite{}, []string{fmt.Sprintf("read local note '%s': %v", entry.FileName, err)}
 	}
 	if hasLocalFile && entry.ContentHash != "" && localHash != entry.ContentHash {
-		return plannedWrite{}, []string{fmt.Sprintf("local note '%s' was modified; use 'pkv edit %s note %s' or remove the local file before syncing", label, folder, entry.FileName)}
+		return plannedWrite{}, []string{fmt.Sprintf("local note '%s' was modified; use 'pkv edit %s note %s' or remove the local file before syncing", entry.FileName, folder, entry.FileName)}
 	}
 
 	write.oldPath = entry.FilePath
-	write.skipWrite = hasLocalFile && entry.ContentHash == write.contentHash && entry.FilePath == filePath
+	write.skipWrite = hasLocalFile && entry.ContentHash == write.contentHash && entry.FilePath == filePath && entry.FileName == item.Name
 	return write, nil
 }
 
@@ -533,102 +525,6 @@ func resolveNotePath(targetDir, noteName string) (string, error) {
 		return "", fmt.Errorf("note path cannot escape target directory")
 	}
 	return absPath, nil
-}
-
-func resolveNoteTarget(item types.Item, folder string) (string, error) {
-	target := item.NoteTargetPath()
-	switch item.NoteStrategy() {
-	case types.NoteStrategyFile:
-		if target == "" {
-			return item.Name, nil
-		}
-		return target, nil
-	case types.NoteStrategyMiseConfD:
-		if target == "" {
-			target = defaultMiseConfDTarget(folder, item.Name)
-		}
-		if err := validateMiseConfDTarget(target); err != nil {
-			return "", err
-		}
-		return target, nil
-	default:
-		return "", fmt.Errorf("unknown %s value %q", types.PKVNoteStrategyFieldName, item.NoteStrategy())
-	}
-}
-
-func validateMiseConfDTarget(target string) error {
-	if strings.TrimSpace(target) == "" {
-		return fmt.Errorf("%s is empty", types.PKVNoteTargetFieldName)
-	}
-
-	normalized := filepath.ToSlash(filepath.Clean(target))
-	if !strings.HasPrefix(normalized, ".config/mise/conf.d/") {
-		return fmt.Errorf("%s must stay under .config/mise/conf.d/: %s", types.PKVNoteTargetFieldName, target)
-	}
-	if !strings.HasSuffix(normalized, ".toml") {
-		return fmt.Errorf("%s must end with .toml: %s", types.PKVNoteTargetFieldName, target)
-	}
-	return nil
-}
-
-func defaultMiseConfDTarget(folder, noteName string) string {
-	folderSlug := noteFragmentSlug(folder)
-	if folderSlug == "" {
-		folderSlug = "folder"
-	}
-	noteSlug := noteFragmentSlug(noteName)
-	if noteSlug == "" {
-		noteSlug = "note"
-	}
-	return filepath.Join(".config", "mise", "conf.d", fmt.Sprintf("pkv-%s-%s.toml", folderSlug, noteSlug))
-}
-
-func noteFragmentSlug(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	value = strings.ReplaceAll(value, "\\", "/")
-	value = strings.TrimSuffix(value, ".toml")
-
-	var b strings.Builder
-	lastDash := false
-	for _, r := range value {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if lastDash {
-				continue
-			}
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-
-	return strings.Trim(b.String(), "-")
-}
-
-func trackedEntryLabel(entry state.NoteEntry) string {
-	target := entryTargetName(entry)
-	if target == "" || entry.FileName == "" || target == entry.FileName {
-		if target != "" {
-			return target
-		}
-		return entry.FileName
-	}
-	return fmt.Sprintf("%s (source %s)", target, entry.FileName)
-}
-
-func entryTargetName(entry state.NoteEntry) string {
-	if entry.FilePath == "" {
-		return entry.FileName
-	}
-	if root := noteCleanupRoot(entry); root != "" {
-		return displayPath(entry.FilePath, root)
-	}
-	if base := filepath.Base(entry.FilePath); base != "" && base != "." {
-		return base
-	}
-	return entry.FileName
 }
 
 func ensureParentDir(path string) error {

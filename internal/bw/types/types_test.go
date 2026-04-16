@@ -150,54 +150,6 @@ func TestIsEnv(t *testing.T) {
 	}
 }
 
-func TestNormalizeNoteStrategy(t *testing.T) {
-	tests := []struct {
-		name   string
-		input  string
-		expect string
-	}{
-		{name: "empty", input: "", expect: ""},
-		{name: "keeps canonical value", input: "mise_conf_d", expect: "mise_conf_d"},
-		{name: "normalizes hyphen and case", input: "  MISE-CONF-D ", expect: "mise_conf_d"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := NormalizeNoteStrategy(tt.input)
-			if got != tt.expect {
-				t.Fatalf("NormalizeNoteStrategy(%q) = %q, want %q", tt.input, got, tt.expect)
-			}
-		})
-	}
-}
-
-func TestNoteStrategy(t *testing.T) {
-	tests := []struct {
-		name   string
-		item   Item
-		expect string
-	}{
-		{name: "default strategy", item: Item{}, expect: NoteStrategyFile},
-		{name: "custom strategy", item: Item{Fields: []CustomField{{Name: PKVNoteStrategyFieldName, Value: "MISE-CONF-D"}}}, expect: NoteStrategyMiseConfD},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.item.NoteStrategy()
-			if got != tt.expect {
-				t.Fatalf("NoteStrategy() = %q, want %q", got, tt.expect)
-			}
-		})
-	}
-}
-
-func TestNoteTargetPath(t *testing.T) {
-	item := Item{Fields: []CustomField{{Name: PKVNoteTargetFieldName, Value: "  .config/mise/conf.d/test.toml  "}}}
-	if got := item.NoteTargetPath(); got != ".config/mise/conf.d/test.toml" {
-		t.Fatalf("NoteTargetPath() = %q", got)
-	}
-}
-
 func TestGetHosts(t *testing.T) {
 	tests := []struct {
 		name   string
