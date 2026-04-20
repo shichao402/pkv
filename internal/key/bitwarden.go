@@ -1,11 +1,11 @@
 package key
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/shichao402/pkv/internal/bw"
 )
 
 // BWSSHKey represents a Bitwarden SSH Key item (type 5)
@@ -27,7 +27,11 @@ type BWItem struct {
 // CreateBWSSHKey creates an SSH Key item in Bitwarden vault.
 // session is optional; if empty, it will be read from BW_SESSION environment variable.
 // folderID is optional; if provided, the item will be placed in that folder.
-func CreateBWSSHKey(session, name, folderID, privateKey, publicKey, fingerprint string) (string, error) {
+func CreateBWSSHKey(client *bw.Client, session, name, folderID, privateKey, publicKey, fingerprint string) (string, error) {
+	if client == nil {
+		client = bw.NewClient()
+	}
+
 	item := BWItem{
 		Type:     5, // SSH Key item type
 		Name:     name,
@@ -44,23 +48,15 @@ func CreateBWSSHKey(session, name, folderID, privateKey, publicKey, fingerprint 
 		return "", fmt.Errorf("marshal JSON failed: %w", err)
 	}
 
-	encoded := base64.StdEncoding.EncodeToString(jsonData)
-
-	args := []string{"create", "item", encoded}
-	if session != "" {
-		args = append(args, "--session", session)
-	}
-
-	cmd := exec.Command("bw", args...)
-	output, err := cmd.CombinedOutput()
+	output, err := client.CreateItem(session, []byte(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("bw create item failed: %w\n%s", err, string(output))
+		return "", fmt.Errorf("bw create item failed: %w", err)
 	}
 
 	var created struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(output, &created); err != nil {
+	if err := json.Unmarshal([]byte(output), &created); err != nil {
 		return "", fmt.Errorf("parse created item: %w", err)
 	}
 	if created.ID == "" {

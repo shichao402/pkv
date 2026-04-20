@@ -28,10 +28,10 @@ var (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list [folder]",
-	Short: "List folders or resources in a folder",
+	Use:     "list [folder]",
+	Short:   "List folders or resources in a folder",
 	Example: "  pkv list\n  pkv list prod",
-	Args:  cobra.MaximumNArgs(1),
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		switch len(args) {
 		case 0:
@@ -146,10 +146,10 @@ var listFolderCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <folder> <ssh|env|note>",
-	Short: "Get resources from a Bitwarden folder",
+	Use:     "get <folder> <ssh|env|note>",
+	Short:   "Get resources from a Bitwarden folder",
 	Example: "  pkv get prod ssh\n  pkv get prod env\n  pkv get prod note",
-	Args:  cobra.ExactArgs(2),
+	Args:    cobra.ExactArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {
@@ -409,10 +409,10 @@ var getNoteCmd = &cobra.Command{
 }
 
 var addCmd = &cobra.Command{
-	Use:   "add <folder> <ssh|env|note>",
-	Short: "Create resources in a Bitwarden folder",
+	Use:     "add <folder> <ssh|env|note>",
+	Short:   "Create resources in a Bitwarden folder",
 	Example: "  pkv add prod ssh --priv ~/.ssh/id_ed25519 --name github\n  pkv add prod env --file .env.prod\n  pkv add prod note --name app.secrets.json --file ./app.secrets.json",
-	Args:  cobra.ExactArgs(2),
+	Args:    cobra.ExactArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {
@@ -492,7 +492,7 @@ var addSSHCmd = &cobra.Command{
 		}
 
 		fmt.Println("Creating SSH key in Bitwarden...")
-		output, err := key.CreateBWSSHKey(session, cfg.KeyName, folderID, opensshKey, publicKey, fingerprint)
+		output, err := key.CreateBWSSHKey(client, session, cfg.KeyName, folderID, opensshKey, publicKey, fingerprint)
 		if err != nil {
 			return fmt.Errorf("create SSH key failed: %w", err)
 		}
@@ -624,10 +624,10 @@ var addNoteCmd = &cobra.Command{
 }
 
 var editCmd = &cobra.Command{
-	Use:   "edit <folder> <env|note> [name-or-id]",
-	Short: "Edit resources in a Bitwarden folder",
+	Use:     "edit <folder> <env|note> [name-or-id]",
+	Short:   "Edit resources in a Bitwarden folder",
 	Example: "  pkv edit prod env\n  pkv edit prod note app.secrets.json",
-	Args:  cobra.MinimumNArgs(2),
+	Args:    cobra.MinimumNArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {
@@ -750,10 +750,10 @@ var editNoteCmd = &cobra.Command{
 }
 
 var removeCmd = &cobra.Command{
-	Use:   "remove <folder> <ssh|env|note> [id...]",
-	Short: "Remove resources from Bitwarden",
+	Use:     "remove <folder> <ssh|env|note> [id...]",
+	Short:   "Remove resources from Bitwarden",
 	Example: "  pkv remove prod env\n  pkv remove prod ssh <item-id>\n  pkv remove prod note <item-id>",
-	Args:  cobra.MinimumNArgs(2),
+	Args:    cobra.MinimumNArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {
@@ -1019,10 +1019,10 @@ var removeNoteCmd = &cobra.Command{
 }
 
 var cleanCmd = &cobra.Command{
-	Use:   "clean <folder> <ssh|env|note>",
-	Short: "Clean local materialized resources",
+	Use:     "clean <folder> <ssh|env|note>",
+	Short:   "Clean local materialized resources",
 	Example: "  pkv clean prod ssh\n  pkv clean prod env\n  pkv clean prod note",
-	Args:  cobra.ExactArgs(2),
+	Args:    cobra.ExactArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {

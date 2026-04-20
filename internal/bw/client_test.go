@@ -446,6 +446,38 @@ func TestClientHelperProcess(t *testing.T) {
 			fmt.Fprint(os.Stderr, "network unreachable\n")
 			os.Exit(1)
 		}
+	case "sync_ok":
+		if strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync") {
+			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			os.Exit(0)
+		}
+	case "sync_create_ok":
+		switch {
+		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync"):
+			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			os.Exit(0)
+		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.Contains(joined, " create item "):
+			fmt.Fprint(os.Stdout, `{"id":"created-item"}`)
+			os.Exit(0)
+		}
+	case "sync_edit_ok":
+		switch {
+		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync"):
+			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			os.Exit(0)
+		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.Contains(joined, " edit item item-1 "):
+			fmt.Fprint(os.Stdout, `{"success":true}`)
+			os.Exit(0)
+		}
+	case "sync_delete_ok":
+		switch {
+		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync"):
+			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			os.Exit(0)
+		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " delete item item-1"):
+			fmt.Fprint(os.Stdout, `{"success":true}`)
+			os.Exit(0)
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "unexpected bw args for %s: %q\n", os.Getenv("PKV_TEST_BW_SCENARIO"), joined)

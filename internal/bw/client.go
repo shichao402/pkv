@@ -78,8 +78,18 @@ func (c *Client) EnsureUnlocked() (string, error) {
 
 // Sync syncs the vault with the remote server.
 func (c *Client) Sync(session string) error {
+	if shouldReuseRecentSync(session, syncNow()) {
+		diag.Printf("reusing recent bw sync for session %s", diag.RedactSecret(session))
+		return nil
+	}
+
 	_, err := c.run(session, "sync")
-	return err
+	if err != nil {
+		return err
+	}
+
+	markRecentSync(session, syncNow())
+	return nil
 }
 
 // ListFolders returns all folders in the vault.
@@ -133,6 +143,9 @@ func (c *Client) ListItems(session, folderID string) ([]types.Item, error) {
 // DeleteItem deletes a Bitwarden item by ID.
 func (c *Client) DeleteItem(session, itemID string) error {
 	_, err := c.run(session, "delete", "item", itemID)
+	if err == nil {
+		invalidateSyncCache()
+	}
 	return err
 }
 
@@ -166,6 +179,7 @@ func (c *Client) CreateItem(session string, itemJSON []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	invalidateSyncCache()
 	return strings.TrimSpace(out), nil
 }
 
@@ -173,6 +187,9 @@ func (c *Client) CreateItem(session string, itemJSON []byte) (string, error) {
 func (c *Client) EditItem(session, itemID string, itemJSON []byte) error {
 	encoded := base64Encode(itemJSON)
 	_, err := c.run(session, "edit", "item", itemID, encoded)
+	if err == nil {
+		invalidateSyncCache()
+	}
 	return err
 }
 
