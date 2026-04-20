@@ -492,6 +492,9 @@ choco install bitwarden-cli
 scoop install bitwarden-cli
 ```
 
+PKV 启动时会先检查 `bw` 是否在 PATH 中，并额外探测一次 `bw --version`。
+如果这个命令失败、没有输出，或者输出不是正常版本号，PKV 会在进入 Bitwarden 认证前直接报错。
+
 ## 从源码构建
 
 ```bash
@@ -507,6 +510,24 @@ make release
 ### `bw: command not found`
 
 先安装 Bitwarden CLI，并确保 `bw` 在 PATH 中。
+
+### 启动时提示 `bw --version` 异常或版本不可识别
+
+PKV 现在会在认证前先探测 `bw --version`。
+
+先单独运行：
+
+```bash
+bw --version
+```
+
+预期输出应该是普通版本号，例如：
+
+```text
+2026.2.0
+```
+
+如果这个命令失败、没有输出，或者被 alias / wrapper 改写成其他文本，先修复 `bw` 安装或调用方式，再重新执行 PKV。
 
 ### 交互模式里 `BW_SESSION` 明明导出了，还是提示输入主密码
 

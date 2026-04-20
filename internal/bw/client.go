@@ -13,18 +13,20 @@ import (
 )
 
 type execCommandFunc func(name string, args ...string) *exec.Cmd
+type lookPathFunc func(file string) (string, error)
 
 type Client struct {
 	execCommand execCommandFunc
+	lookPath    lookPathFunc
 }
 
 func NewClient() *Client {
-	return &Client{execCommand: exec.Command}
+	return &Client{execCommand: exec.Command, lookPath: exec.LookPath}
 }
 
 // EnsureUnlocked checks bw status, logs in if needed, unlocks vault, returns session key.
 func (c *Client) EnsureUnlocked() (string, error) {
-	if err := CheckBWInstalled(); err != nil {
+	if err := c.checkBWInstalled(); err != nil {
 		return "", err
 	}
 
@@ -332,10 +334,25 @@ func (c *Client) validateSession(session string) error {
 }
 
 func (c *Client) command(args ...string) *exec.Cmd {
+	return c.getExecCommand()("bw", args...)
+}
+
+func (c *Client) checkBWInstalled() error {
+	return checkBWInstalled(c.getLookPath(), c.getExecCommand(), os.Stdout)
+}
+
+func (c *Client) getExecCommand() execCommandFunc {
 	if c.execCommand == nil {
 		c.execCommand = exec.Command
 	}
-	return c.execCommand("bw", args...)
+	return c.execCommand
+}
+
+func (c *Client) getLookPath() lookPathFunc {
+	if c.lookPath == nil {
+		c.lookPath = exec.LookPath
+	}
+	return c.lookPath
 }
 
 func summarizeBWCommand(args []string) string {

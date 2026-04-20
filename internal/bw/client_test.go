@@ -272,6 +272,7 @@ func TestEnsureUnlockedReusesExportedSession(t *testing.T) {
 
 	client := NewClient()
 	client.execCommand = newTestBWExecCommand(t, "reuse_exported_session", logPath)
+	client.lookPath = func(string) (string, error) { return "/usr/local/bin/bw", nil }
 
 	session, err := client.EnsureUnlocked()
 	if err != nil {
@@ -282,6 +283,7 @@ func TestEnsureUnlockedReusesExportedSession(t *testing.T) {
 	}
 
 	if got := readTestBWCalls(t, logPath); !reflect.DeepEqual(got, []string{
+		"bw --version|env=valid-session",
 		"bw --nointeraction --session valid-session list folders|env=valid-session",
 	}) {
 		t.Fatalf("bw calls = %#v", got)
@@ -294,6 +296,7 @@ func TestEnsureUnlockedRefreshesExpiredExportedSession(t *testing.T) {
 
 	client := NewClient()
 	client.execCommand = newTestBWExecCommand(t, "refresh_expired_session", logPath)
+	client.lookPath = func(string) (string, error) { return "/usr/local/bin/bw", nil }
 
 	session, err := client.EnsureUnlocked()
 	if err != nil {
@@ -307,6 +310,7 @@ func TestEnsureUnlockedRefreshesExpiredExportedSession(t *testing.T) {
 	}
 
 	if got := readTestBWCalls(t, logPath); !reflect.DeepEqual(got, []string{
+		"bw --version|env=expired-session",
 		"bw --nointeraction --session expired-session list folders|env=expired-session",
 		"bw --nointeraction status|env=",
 		"bw unlock --raw|env=",
@@ -321,6 +325,7 @@ func TestEnsureUnlockedReturnsExportedSessionValidationError(t *testing.T) {
 
 	client := NewClient()
 	client.execCommand = newTestBWExecCommand(t, "exported_session_network_error", logPath)
+	client.lookPath = func(string) (string, error) { return "/usr/local/bin/bw", nil }
 
 	_, err := client.EnsureUnlocked()
 	if err == nil {
@@ -331,6 +336,7 @@ func TestEnsureUnlockedReturnsExportedSessionValidationError(t *testing.T) {
 	}
 
 	if got := readTestBWCalls(t, logPath); !reflect.DeepEqual(got, []string{
+		"bw --version|env=flaky-session",
 		"bw --nointeraction --session flaky-session list folders|env=flaky-session",
 	}) {
 		t.Fatalf("bw calls = %#v", got)
@@ -403,6 +409,20 @@ func TestClientHelperProcess(t *testing.T) {
 	}
 
 	joined := strings.Join(bwArgs[1:], " ")
+	if joined == "--version" {
+		switch os.Getenv("PKV_TEST_BW_SCENARIO") {
+		case "version_command_fails":
+			fmt.Fprint(os.Stderr, "permission denied\n")
+			os.Exit(1)
+		case "version_malformed_output":
+			fmt.Fprint(os.Stdout, "Bitwarden CLI\n")
+			os.Exit(0)
+		default:
+			fmt.Fprint(os.Stdout, "2026.2.0\n")
+			os.Exit(0)
+		}
+	}
+
 	switch os.Getenv("PKV_TEST_BW_SCENARIO") {
 	case "reuse_exported_session":
 		if joined == "--nointeraction --session valid-session list folders" {
