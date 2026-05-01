@@ -327,6 +327,19 @@ pkv clean <folder> note
 - `clean` 只清理本地，不删除 Bitwarden 里的数据
 - `clean <folder> note` 只清理**当前目录**里这份同步结果
 
+### `unlock`
+
+```bash
+pkv unlock
+pkv unlock --export
+```
+
+用途：
+
+- 解锁 Bitwarden 并把 session 打到 stdout，便于 `$(...)` / `eval` 复用
+- 已有有效 `BW_SESSION` 时直接复用，不再询问主密码
+- 详细用法见下文「自动化与脚本化（BW_SESSION）」一节
+
 ## 本地与远端如何对齐
 
 这是 PKV 设计里最重要的一部分。
@@ -451,6 +464,99 @@ Folder: my-app-prod
 ```bash
 export EDITOR="code --wait"
 ```
+
+## 自动化与脚本化（BW_SESSION）
+
+PKV 默认会在需要时打开 TTY 提示主密码。如果你要在脚本、CI 或者多窗口场景里复用解锁状态，**正路是复用 Bitwarden session**，而不是把主密码塞进环境变量或命令行。
+
+PKV 启动时会优先读环境变量 `BW_SESSION`，并用 `bw list folders` 探一次看 session 是否还活着。活着就直接复用，不会再提示。
+
+### `pkv unlock`
+
+PKV 提供了一个专门解锁并输出 session 的子命令，避免你记 `bw` 的具体用法：
+
+```bash
+# 默认把 session 字符串打到 stdout，方便 $(...) 捕获
+export BW_SESSION="$(pkv unlock)"
+
+# 或者直接输出可以 eval 的 shell 语句
+eval "$(pkv unlock --export)"
+```
+
+特性：
+
+- **stdout 只放 session**，所有提示（"Authenticating..."）都打到 stderr，不会污染 `$(...)` 结果
+- 如果 `BW_SESSION` 已经存在且有效，**直接复用并打印**，不会重新提示主密码
+- 如果 session 已失效或未设置，走 `bw unlock --raw` 交互式询问主密码
+- PKV **从不**接受主密码参数，全部交互由 `bw` 在 TTY 上处理
+
+### 一次解锁，多次使用
+
+```bash
+export BW_SESSION="$(pkv unlock)"
+pkv get lyra note
+pkv get vikunja-tasker env
+pkv list
+```
+
+同一个 shell 窗口里，所有 PKV 命令都不再提示主密码，直到 session 到期（默认 Bitwarden vault timeout）或你 `bw lock` 主动失效它。
+
+### 放进你的 shell 里
+
+如果想避免重复敲 `pkv unlock`，可以加一个显式的 alias，按需触发：
+
+```bash
+# ~/.zshrc / ~/.bashrc
+alias pkv-unlock='eval "$(pkv unlock --export)"'
+```
+
+然后：
+
+```bash
+pkv-unlock            # 每天进终端时手动触发一次
+pkv get lyra note
+pkv get tencent-cloud ssh
+```
+
+注意：**不要在 shell 启动时自动执行 `pkv unlock`**，那会把"解锁"从显式动作变成隐式动作，和保存主密码到磁盘没有本质区别。
+
+### CI / 无人值守场景
+
+CI 里的典型做法是：主密码只作为**外部 secret** 注入到 `bw unlock` 的环境，解锁后立刻释放。这一步绕过 `pkv unlock`，直接用 `bw`：
+
+```bash
+# CI secret 管理器已经把 BW_PASSWORD 注进这一步
+export BW_SESSION="$(bw unlock --raw --passwordenv BW_PASSWORD)"
+unset BW_PASSWORD
+
+pkv get lyra note
+pkv get vikunja-tasker env
+```
+
+这样 `pkv` 本身从头到尾不接触主密码，`BW_SESSION` 只在本次 job 生命周期内有效——即使泄漏也能通过 `bw lock` 单独失效这一条会话，不用轮换整个 vault。
+
+### 交互模式里的 unlock
+
+在 `pkv>` REPL 里也可以手动触发一次解锁来预热 session：
+
+```text
+pkv> unlock
+Authenticating with Bitwarden...
+Vault unlocked.
+pkv> lyra note
+```
+
+REPL 里 `unlock` **不会把 session 打到屏幕上**，只确认解锁成功。session 会留在当前进程内，后续命令复用。
+
+### 为什么 PKV 不提供 `--master-pass`
+
+这是一次刻意的取舍：
+
+- **Blast radius**：`BW_SESSION` 泄漏 = 这条 session 过期前可读；主密码泄漏 = 整个 vault 永久失守，必须改密码 + 轮换所有秘密
+- **不变量**：PKV 应当永远不接触主密码。这条约束在代码层强于任何文档警告
+- **功能没少**：`BW_SESSION` 已经覆盖所有自动化场景，包括一次解锁跨多命令复用
+
+如果你的使用场景看起来缺了 `--master-pass` 才能做到，多半说明正确做法是先 `pkv unlock`（或 `bw unlock --raw`）拿 session，再让 PKV 使用它。
 
 ## 本地产物与状态文件
 

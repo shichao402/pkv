@@ -72,6 +72,11 @@ func runShell(_ *cobra.Command, _ []string) error {
 		case "help":
 			diag.Printf("shell dispatching built-in help")
 			rootCmd.SetArgs([]string{"--help"})
+		case "unlock":
+			// REPL priming: run unlock but never echo the session on screen.
+			unlockQuiet = true
+			diag.Printf("shell executing unlock (quiet mode)")
+			rootCmd.SetArgs(args)
 		case "list", "get", "add", "edit", "remove", "clean", "update", "completion", "version":
 			diag.Printf("shell executing direct command %v", args)
 			rootCmd.SetArgs(args)
@@ -134,6 +139,8 @@ func resetShellCommandState() {
 	addSSHPubFlag = ""
 	addNameFlag = ""
 	addNoteFileFlag = ""
+	unlockExportFlag = false
+	unlockQuiet = false
 }
 
 func translateShellArgs(args []string) ([]string, error) {

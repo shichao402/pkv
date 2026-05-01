@@ -28,7 +28,8 @@ Common commands:
   pkv remove <folder> ssh <id> [id2]...
   pkv remove <folder> env
   pkv remove <folder> note <id> [id2]...
-  pkv clean <folder> ssh|env|note`,
+  pkv clean <folder> ssh|env|note
+  pkv unlock`,
 	Version:      version.Version,
 	SilenceUsage: true,
 }
