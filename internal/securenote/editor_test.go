@@ -10,19 +10,19 @@ import (
 func TestOpenEditor(t *testing.T) {
 	t.Run("create temp file with initial content", func(t *testing.T) {
 		initialContent := "line 1\nline 2"
-		
+
 		// Set a simple editor that just exits (simulates empty edit)
 		oldEditor := os.Getenv("EDITOR")
 		defer os.Setenv("EDITOR", oldEditor)
-		
+
 		// Use 'cat' as a no-op editor that just exits
 		os.Setenv("EDITOR", "cat")
-		
+
 		result, err := OpenEditor(initialContent)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		
+
 		// When editor is 'cat', it reads from stdin, so output will be empty or the content
 		// This test is environment-dependent, so we just verify it doesn't crash
 		_ = result
@@ -32,7 +32,7 @@ func TestOpenEditor(t *testing.T) {
 		oldEditor := os.Getenv("EDITOR")
 		defer os.Setenv("EDITOR", oldEditor)
 		os.Unsetenv("EDITOR")
-		
+
 		// We can't easily test the fallback without actually running 'vi'
 		// So we just verify the function handles it gracefully by checking for errors
 		t.Skip("skipping interactive editor test")
@@ -45,19 +45,19 @@ func TestOpenEditor(t *testing.T) {
 			t.Fatalf("create temp file: %v", err)
 		}
 		defer os.Remove(tmpFile.Name())
-		
+
 		content := "test content"
 		if _, err := tmpFile.WriteString(content); err != nil {
 			t.Fatalf("write temp file: %v", err)
 		}
 		tmpFile.Close()
-		
+
 		// Read it back to verify
 		data, err := os.ReadFile(tmpFile.Name())
 		if err != nil {
 			t.Fatalf("read temp file: %v", err)
 		}
-		
+
 		if string(data) != content {
 			t.Errorf("content mismatch: got %q, want %q", string(data), content)
 		}
@@ -66,18 +66,18 @@ func TestOpenEditor(t *testing.T) {
 	t.Run("temp file is cleaned up", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		tmpFile := filepath.Join(tmpDir, "test-content.txt")
-		
+
 		err := os.WriteFile(tmpFile, []byte("test"), 0o600)
 		if err != nil {
 			t.Fatalf("write test file: %v", err)
 		}
-		
+
 		// Remove it like OpenEditor would
 		err = os.Remove(tmpFile)
 		if err != nil {
 			t.Fatalf("remove failed: %v", err)
 		}
-		
+
 		// Verify it's gone
 		if _, err := os.Stat(tmpFile); !os.IsNotExist(err) {
 			t.Errorf("file should not exist after removal")
@@ -91,17 +91,17 @@ func TestOpenEditor(t *testing.T) {
 			t.Fatalf("create temp file: %v", err)
 		}
 		defer os.Remove(tmpFile.Name())
-		
+
 		if _, err := tmpFile.WriteString(content); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 		tmpFile.Close()
-		
+
 		data, err := os.ReadFile(tmpFile.Name())
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
-		
+
 		if string(data) != content {
 			t.Errorf("multiline content mismatch")
 		}
@@ -114,12 +114,12 @@ func TestOpenEditor(t *testing.T) {
 		}
 		defer os.Remove(tmpFile.Name())
 		tmpFile.Close()
-		
+
 		data, err := os.ReadFile(tmpFile.Name())
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
-		
+
 		if len(data) != 0 {
 			t.Errorf("empty file should have no content")
 		}
@@ -132,17 +132,17 @@ func TestOpenEditor(t *testing.T) {
 			t.Fatalf("create temp file: %v", err)
 		}
 		defer os.Remove(tmpFile.Name())
-		
+
 		if _, err := tmpFile.WriteString(content); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 		tmpFile.Close()
-		
+
 		data, err := os.ReadFile(tmpFile.Name())
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
-		
+
 		if string(data) != content {
 			t.Errorf("special chars mismatch")
 		}
