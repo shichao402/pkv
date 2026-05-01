@@ -65,11 +65,19 @@ Please use GitHub Issues to report bugs or suggest features. Include:
 
 ## Release Process
 
-1. Update version in code and documentation
-2. Update CHANGELOG.md
-3. Create a git tag: `git tag v0.2.0`
-4. Push the tag: `git push origin v0.2.0`
-5. GitHub Actions will automatically build and create a release
+PKV releases are fully driven by CI from a single source of truth (`version.json`).
+**Do not create or push tags manually** — the `Auto Release` workflow creates the tag itself.
+
+1. Bump `version.json` (no `v` prefix, e.g. `0.5.1`).
+2. Add a `## [vX.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md`.
+3. Commit: `git commit -m "chore(release): bump version to vX.Y.Z"`.
+4. `git push origin main` — that is the entire release step.
+
+CI (`.github/workflows/auto-release.yml`) will read `version.json`, create the tag,
+cross-compile 6 platforms, and publish the GitHub Release.
+
+Full details and recovery procedure (if a tag is pushed by mistake):
+see [`RELEASE_CHECKLIST.md`](./RELEASE_CHECKLIST.md).
 
 ## Questions?
 
