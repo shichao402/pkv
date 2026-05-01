@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.5.1] - 2026-05-01
+
+### Docs
+- 重写 `RELEASE_CHECKLIST.md`，明确 PKV 的发布流程是"改 `version.json` → 推 main"，tag 由 `.github/workflows/auto-release.yml` 创建；不要手动 `git tag` / `git push origin vX.Y.Z`（会让 CI 判定 tag 已存在从而跳过构建）。同时记录手推 tag 后的恢复流程（删远端 tag + 空 commit 重新触发）
+- `CONTRIBUTING.md` 的 Release Process 小节与新流程对齐，并回链到 `RELEASE_CHECKLIST.md`
+
 ## [v0.5.0] - 2026-05-01
 
 ### Added
