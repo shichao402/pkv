@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-05-01
+
+### Added
+- 新增 `pkv unlock` 子命令，用于解锁 Bitwarden 并把 session 打到 stdout，方便 `export BW_SESSION="$(pkv unlock)"` 或 `eval "$(pkv unlock --export)"` 在脚本里复用
+- 交互模式里支持 `pkv> unlock` 预热 session，不回显 token
+
+### Changed
+- 同一个 `pkv` 进程内会复用最近一次成功的 `bw sync` 结果，连续只读命令不再重复触发远端同步；一旦本轮出现写操作，会自动失效缓存
+- PKV 启动时先探测 `bw --version`，若 `bw` 缺失或输出异常，在进入 Bitwarden 认证前就直接报错
+- README 重写「自动化与脚本化」一节，以 `pkv unlock` 为推荐路径，并说明为什么 PKV 不提供 `--master-pass` 之类的入口（保持"PKV 永不接触主密码"作为代码层不变量）
+
 ## [v0.4.2] - 2026-04-16
 
 ### Added
