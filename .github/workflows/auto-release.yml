@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+# Opt into Node.js 24 runtime for JavaScript actions ahead of the 2026-06-02
+# runner default switch. Lets us stay on actions/checkout@v4, setup-go@v5,
+# *-artifact@v4 while silencing the Node 20 deprecation warnings.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   prepare:
     name: Prepare Release
