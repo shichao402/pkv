@@ -48,7 +48,7 @@ func CreateBWSSHKey(client *bw.Client, session, name, folderID, privateKey, publ
 		return "", fmt.Errorf("marshal JSON failed: %w", err)
 	}
 
-	output, err := client.CreateItem(session, []byte(jsonData))
+	output, err := client.CreateItem(session, jsonData)
 	if err != nil {
 		return "", fmt.Errorf("bw create item failed: %w", err)
 	}
