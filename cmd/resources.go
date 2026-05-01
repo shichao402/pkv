@@ -487,7 +487,7 @@ var addSSHCmd = &cobra.Command{
 			return fmt.Errorf("confirmation failed: %w", err)
 		}
 		if !confirm {
-			fmt.Println("Cancelled.")
+			fmt.Println("Canceled.")
 			return nil
 		}
 
@@ -523,7 +523,7 @@ var addEnvCmd = &cobra.Command{
 			return err
 		}
 		if strings.TrimSpace(content) == "" {
-			fmt.Println("Empty content, cancelled.")
+			fmt.Println("Empty content, canceled.")
 			return nil
 		}
 
@@ -591,7 +591,7 @@ var addNoteCmd = &cobra.Command{
 			return err
 		}
 		if strings.TrimSpace(content) == "" {
-			fmt.Println("Empty content, cancelled.")
+			fmt.Println("Empty content, canceled.")
 			return nil
 		}
 
