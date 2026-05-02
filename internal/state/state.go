@@ -89,7 +89,8 @@ func Load() (*State, error) {
 // validateDates checks that all date fields are valid RFC3339 timestamps.
 func validateDates(st *State) error {
 	// Check SSH key dates
-	for _, entry := range st.SSHKeys {
+	for i := range st.SSHKeys {
+		entry := &st.SSHKeys[i]
 		if entry.AddedAt != "" {
 			if _, err := time.Parse(time.RFC3339, entry.AddedAt); err != nil {
 				return err
@@ -98,7 +99,8 @@ func validateDates(st *State) error {
 	}
 
 	// Check note dates
-	for _, entry := range st.Notes {
+	for i := range st.Notes {
+		entry := &st.Notes[i]
 		if entry.SyncedAt != "" {
 			if _, err := time.Parse(time.RFC3339, entry.SyncedAt); err != nil {
 				return err
@@ -107,7 +109,8 @@ func validateDates(st *State) error {
 	}
 
 	// Check env dates
-	for _, entry := range st.Envs {
+	for i := range st.Envs {
+		entry := &st.Envs[i]
 		if entry.SetAt != "" {
 			if _, err := time.Parse(time.RFC3339, entry.SetAt); err != nil {
 				return err
@@ -136,7 +139,8 @@ func (s *State) Save() error {
 func (s *State) AddSSHKey(entry SSHKeyEntry) {
 	entry.AddedAt = time.Now().Format(time.RFC3339)
 	// Replace existing entry for same item
-	for i, e := range s.SSHKeys {
+	for i := range s.SSHKeys {
+		e := &s.SSHKeys[i]
 		if e.ItemID == entry.ItemID {
 			s.SSHKeys[i] = entry
 			return
@@ -153,9 +157,10 @@ func (e SSHKeyEntry) IsDeployed() bool {
 // FindDeployedSSHKeysByFolder returns deployed SSH keys for the given folder.
 func (s *State) FindDeployedSSHKeysByFolder(folder string) []SSHKeyEntry {
 	var matched []SSHKeyEntry
-	for _, e := range s.SSHKeys {
+	for i := range s.SSHKeys {
+		e := &s.SSHKeys[i]
 		if e.IsDeployed() && e.Folder == folder {
-			matched = append(matched, e)
+			matched = append(matched, *e)
 		}
 	}
 	return matched
@@ -164,9 +169,10 @@ func (s *State) FindDeployedSSHKeysByFolder(folder string) []SSHKeyEntry {
 // RemoveDeployedSSHKeysByFolder removes deployed SSH key entries for the given folder.
 func (s *State) RemoveDeployedSSHKeysByFolder(folder string) {
 	var kept []SSHKeyEntry
-	for _, e := range s.SSHKeys {
+	for i := range s.SSHKeys {
+		e := &s.SSHKeys[i]
 		if !e.IsDeployed() || e.Folder != folder {
-			kept = append(kept, e)
+			kept = append(kept, *e)
 		}
 	}
 	s.SSHKeys = kept
@@ -175,7 +181,8 @@ func (s *State) RemoveDeployedSSHKeysByFolder(folder string) {
 // AddEnv records deployed environment variables.
 func (s *State) AddEnv(entry EnvEntry) {
 	entry.SetAt = time.Now().Format(time.RFC3339)
-	for i, e := range s.Envs {
+	for i := range s.Envs {
+		e := &s.Envs[i]
 		if e.ItemID == entry.ItemID {
 			s.Envs[i] = entry
 			return
@@ -192,9 +199,10 @@ func (s *State) AddEnv(entry EnvEntry) {
 // Legacy entries created before folder tracking are matched by Name for compatibility.
 func (s *State) FindEnvsByFolder(folder string) []EnvEntry {
 	var matched []EnvEntry
-	for _, e := range s.Envs {
+	for i := range s.Envs {
+		e := &s.Envs[i]
 		if e.Folder == folder || (e.Folder == "" && e.Name == folder) {
-			matched = append(matched, e)
+			matched = append(matched, *e)
 		}
 	}
 	return matched
@@ -210,9 +218,10 @@ func (s *State) FindEnvsByName(name string) []EnvEntry {
 // Legacy entries created before folder tracking are matched by Name for compatibility.
 func (s *State) RemoveEnvsByFolder(folder string) {
 	var kept []EnvEntry
-	for _, e := range s.Envs {
+	for i := range s.Envs {
+		e := &s.Envs[i]
 		if e.Folder != folder && (e.Folder != "" || e.Name != folder) {
-			kept = append(kept, e)
+			kept = append(kept, *e)
 		}
 	}
 	s.Envs = kept
@@ -232,7 +241,8 @@ func (s *State) EnvItemIDsByRecency() []string {
 		setAt string
 	}
 	entries := make([]ts, 0, len(s.Envs))
-	for _, e := range s.Envs {
+	for i := range s.Envs {
+		e := &s.Envs[i]
 		entries = append(entries, ts{id: e.ItemID, setAt: e.SetAt})
 	}
 	// Simple insertion sort (small list)

@@ -1211,7 +1211,8 @@ func readNoteContent(fileFlag, openEditorMessage string) (string, error) {
 
 func collectDeployedSSHHosts(entries []state.SSHKeyEntry) []string {
 	var hosts []string
-	for _, entry := range entries {
+	for i := range entries {
+		entry := &entries[i]
 		if !entry.IsDeployed() || len(entry.Hosts) == 0 {
 			continue
 		}
