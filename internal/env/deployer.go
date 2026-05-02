@@ -131,6 +131,81 @@ func (d *Deployer) Deploy(folder string, item types.Item) (state.EnvEntry, error
 	return entry, nil
 }
 
+// DeployMerged writes env artifacts from a merge result produced by
+// MergePkvEnvNotes. The artifacts always land under the current folder (the
+// first element of result.Chain), regardless of which folder actually
+// supplied each variable.
+//
+// This is the include-aware path used by `pkv get <folder> env`. It differs
+// from Deploy in two ways:
+//
+//   - It does not parse a single item; vars/sources are already resolved.
+//   - The state.EnvEntry it records has no ItemID when the current folder
+//     itself has no pkv.env note. AddEnv falls back to Folder-based dedup in
+//     that case so the record still updates cleanly on re-run.
+//
+// currentItem is the `pkv.env` item from chain[0] if present; pass the zero
+// types.Item (hasCurrent=false) to signal that chain[0] has no env note.
+//
+// The caller is responsible for surfacing result.Conflicts to the user; this
+// function does not log them.
+func (d *Deployer) DeployMerged(folder string, result MergeResult, currentItem types.Item, hasCurrent bool) (state.EnvEntry, error) {
+	jsonPath, shellPath, powerShellPath, err := artifactPaths(folder)
+	if err != nil {
+		return state.EnvEntry{}, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o700); err != nil {
+		return state.EnvEntry{}, err
+	}
+
+	// result.Vars is already sorted by key (see merge.go), so feed the shared
+	// writers directly without re-sorting.
+	sorted := make([]EnvVar, len(result.Vars))
+	for i, v := range result.Vars {
+		sorted[i] = v.EnvVar
+	}
+
+	diag.Printf("deploying merged env artifacts for folder %q: chain=%v vars=%d conflicts=%d",
+		folder, result.Chain, len(sorted), len(result.Conflicts))
+	diag.Printf("env artifact targets: json=%q shell=%q powershell=%q", jsonPath, shellPath, powerShellPath)
+
+	if err := writeJSONArtifact(jsonPath, sorted); err != nil {
+		return state.EnvEntry{}, err
+	}
+	if err := writeShellArtifact(shellPath, folder, sorted); err != nil {
+		return state.EnvEntry{}, err
+	}
+	if err := writePowerShellArtifact(powerShellPath, folder, sorted); err != nil {
+		return state.EnvEntry{}, err
+	}
+
+	keys := make([]string, len(sorted))
+	for i, v := range sorted {
+		keys[i] = v.Key
+	}
+
+	entry := state.EnvEntry{
+		Folder:         folder,
+		Keys:           keys,
+		JSONPath:       jsonPath,
+		ShellPath:      shellPath,
+		PowerShellPath: powerShellPath,
+	}
+	if hasCurrent {
+		entry.ItemID = currentItem.ID
+		entry.Name = currentItem.Name
+	} else {
+		// No local pkv.env; the record still needs a stable name for list/clean
+		// UX. Use the reserved name as a placeholder so the existing Remove /
+		// FindEnvsByFolder code paths read cleanly.
+		entry.Name = types.ReservedEnvNoteName
+	}
+	d.state.AddEnv(entry)
+	diag.Printf("merged env artifacts written for folder %q (chain=%v)", folder, result.Chain)
+	return entry, nil
+}
+
 // Remove removes local env artifacts for a folder-scoped env note.
 func (d *Deployer) Remove(entry state.EnvEntry) error {
 	jsonPath, shellPath, powerShellPath, err := artifactPaths(entryFolder(entry))

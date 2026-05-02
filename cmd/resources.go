@@ -322,29 +322,53 @@ var getEnvCmd = &cobra.Command{
 			return fmt.Errorf("sync failed: %w", err)
 		}
 
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
+		fmt.Printf("Resolving include chain for '%s'...\n", folder)
+		chain, err := client.LoadIncludeChain(session, folder)
 		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
+			return fmt.Errorf("resolve include chain: %w", err)
 		}
 
-		fmt.Println("Listing items...")
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
+		chainNames := make([]string, len(chain))
+		for i, f := range chain {
+			chainNames[i] = f.Name
+		}
+		if len(chain) > 1 {
+			fmt.Printf("Expanded pkv.include: %s\n", strings.Join(chainNames, " -> "))
+		}
+
+		// Collect pkv.env body per folder on the chain. Missing env notes are
+		// legal (the folder may only contribute notes), so we just skip them.
+		notesByFolder := make(map[string]string, len(chain))
+		var currentItem bwtypes.Item
+		hasCurrent := false
+		for i, f := range chain {
+			items, err := client.ListItems(session, f.ID)
+			if err != nil {
+				return fmt.Errorf("list items for folder '%s': %w", f.Name, err)
+			}
+			envItem, found, err := bw.FindManagedEnvNote(items)
+			if err != nil {
+				return fmt.Errorf("folder '%s': %w", f.Name, err)
+			}
+			if found {
+				notesByFolder[f.Name] = envItem.Notes
+				if i == 0 {
+					currentItem = envItem
+					hasCurrent = true
+				}
+			}
 		}
 
 		st, err := state.Load()
 		if err != nil {
 			return fmt.Errorf("load state failed: %w", err)
 		}
-
 		deployer := env.NewDeployer(st)
-		envItem, found, err := bw.FindManagedEnvNote(items)
-		if err != nil {
-			return err
-		}
-		if !found {
+
+		// If nothing on the whole chain provides env, fall back to the existing
+		// cleanup path keyed on the current folder. Previously deployed
+		// artifacts for this folder are removed and state pruned.
+		if len(notesByFolder) == 0 {
 			cleaned := 0
 			for _, entry := range st.FindEnvsByFolder(folder) {
 				if err := deployer.Remove(entry); err != nil {
@@ -357,19 +381,42 @@ var getEnvCmd = &cobra.Command{
 				return fmt.Errorf("save state failed: %w", err)
 			}
 			if cleaned > 0 {
-				fmt.Printf("No env note found. Cleaned %d local env artifact set(s) for folder '%s'.\n", cleaned, folder)
+				fmt.Printf("No env note found on chain. Cleaned %d local env artifact set(s) for folder '%s'.\n", cleaned, folder)
 			} else {
 				fmt.Printf("No env note found. Create one Secure Note named '%s'.\n", bwtypes.ReservedEnvNoteName)
 			}
 			return nil
 		}
 
-		entry, err := deployer.Deploy(folder, envItem)
+		result, err := env.MergePkvEnvNotes(chainNames, notesByFolder)
+		if err != nil {
+			return err
+		}
+
+		// Pre-flight conflict report: list every shadowed declaration so the
+		// user knows which include is being overridden by whom.
+		if len(result.Conflicts) > 0 {
+			fmt.Println("Env overrides:")
+			for _, c := range result.Conflicts {
+				fmt.Printf("  %s: winner=%s shadowed=%s\n", c.Key, c.Winner, strings.Join(c.Losers, ","))
+			}
+		}
+
+		entry, err := deployer.DeployMerged(folder, result, currentItem, hasCurrent)
 		if err != nil {
 			return err
 		}
 		if err := st.Save(); err != nil {
 			return fmt.Errorf("save state failed: %w", err)
+		}
+
+		// Per-var source trace helps the user confirm which folder the value
+		// actually came from. Only print when the chain expanded; for the
+		// single-folder case this is noise.
+		if len(chain) > 1 {
+			for _, v := range result.Vars {
+				fmt.Printf("  %s [from: %s]\n", v.Key, v.Source)
+			}
 		}
 
 		fmt.Printf("Wrote env artifacts for folder '%s'.\n", folder)
