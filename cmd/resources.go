@@ -764,12 +764,12 @@ var removeCmd = &cobra.Command{
 			return removeEnvCmd.RunE(removeEnvCmd, []string{folder})
 		case "ssh":
 			if len(args) < 3 {
-				return fmt.Errorf("usage: pkv remove <folder> ssh <id> [id2]...")
+				return fmt.Errorf("usage: pkv remove <folder> ssh <id> [id2...]")
 			}
 			return removeSSHCmd.RunE(removeSSHCmd, append([]string{folder}, args[2:]...))
 		case "note":
 			if len(args) < 3 {
-				return fmt.Errorf("usage: pkv remove <folder> note <id> [id2]...")
+				return fmt.Errorf("usage: pkv remove <folder> note <id> [id2...]")
 			}
 			return removeNoteCmd.RunE(removeNoteCmd, append([]string{folder}, args[2:]...))
 		default:

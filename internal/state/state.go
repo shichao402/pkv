@@ -211,7 +211,7 @@ func (s *State) FindEnvsByName(name string) []EnvEntry {
 func (s *State) RemoveEnvsByFolder(folder string) {
 	var kept []EnvEntry
 	for _, e := range s.Envs {
-		if !(e.Folder == folder || (e.Folder == "" && e.Name == folder)) {
+		if e.Folder != folder && (e.Folder != "" || e.Name != folder) {
 			kept = append(kept, e)
 		}
 	}
@@ -301,7 +301,7 @@ func (s *State) AddNote(entry NoteEntry) {
 func (s *State) RemoveNoteForTarget(itemID, folder, targetDir string) {
 	var kept []NoteEntry
 	for _, e := range s.Notes {
-		if !(e.ItemID == itemID && e.Folder == folder && noteEntryMatchesTarget(e, targetDir)) {
+		if e.ItemID != itemID || e.Folder != folder || !noteEntryMatchesTarget(e, targetDir) {
 			kept = append(kept, e)
 		}
 	}
@@ -312,7 +312,7 @@ func (s *State) RemoveNoteForTarget(itemID, folder, targetDir string) {
 func (s *State) RemoveNotesByTarget(folder, targetDir string) {
 	var kept []NoteEntry
 	for _, e := range s.Notes {
-		if !(e.Folder == folder && noteEntryMatchesTarget(e, targetDir)) {
+		if e.Folder != folder || !noteEntryMatchesTarget(e, targetDir) {
 			kept = append(kept, e)
 		}
 	}

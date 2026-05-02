@@ -256,12 +256,12 @@ func validEnvVarName(name string) bool {
 		return false
 	}
 	c := name[0]
-	if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+	if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '_' {
 		return false
 	}
 	for i := 1; i < len(name); i++ {
 		c = name[i]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
 			return false
 		}
 	}

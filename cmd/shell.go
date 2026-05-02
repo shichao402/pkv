@@ -145,7 +145,7 @@ func resetShellCommandState() {
 
 func translateShellArgs(args []string) ([]string, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("usage: <folder> <list|get|add|edit|remove|clean|ssh|env|note> ...")
+		return nil, fmt.Errorf("usage: <folder> <list|get|add|edit|remove|clean|ssh|env|note> [args...]")
 	}
 	folder := args[0]
 	second := args[1]

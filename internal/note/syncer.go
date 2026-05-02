@@ -325,10 +325,7 @@ func collectReleasedPaths(targetDir string, removedPaths map[string]struct{}) ma
 			continue
 		}
 		dir := filepath.Dir(path)
-		for {
-			if dir == "." || dir == string(os.PathSeparator) || dir == targetDir {
-				break
-			}
+		for dir != "." && dir != string(os.PathSeparator) && dir != targetDir {
 			if !pathWillBeReleased(dir, targetDir, removedPaths, memo) {
 				break
 			}
