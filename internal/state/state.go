@@ -351,7 +351,8 @@ func (s *State) AddStoredSSHKey(itemID, keyName, fingerprint string) {
 		StoredAt:    time.Now().Format(time.RFC3339),
 	}
 	// Replace existing entry for same item
-	for i, e := range s.SSHKeys {
+	for i := range s.SSHKeys {
+		e := &s.SSHKeys[i]
 		if e.ItemID == itemID {
 			s.SSHKeys[i] = entry
 			return
@@ -362,8 +363,8 @@ func (s *State) AddStoredSSHKey(itemID, keyName, fingerprint string) {
 
 // FindStoredSSHKeyByFingerprint finds a stored SSH key by its fingerprint.
 func (s *State) FindStoredSSHKeyByFingerprint(fingerprint string) *SSHKeyEntry {
-	for i, e := range s.SSHKeys {
-		if e.Fingerprint == fingerprint {
+	for i := range s.SSHKeys {
+		if s.SSHKeys[i].Fingerprint == fingerprint {
 			return &s.SSHKeys[i]
 		}
 	}
@@ -373,9 +374,10 @@ func (s *State) FindStoredSSHKeyByFingerprint(fingerprint string) *SSHKeyEntry {
 // RemoveStoredSSHKey removes a stored SSH key by itemID.
 func (s *State) RemoveStoredSSHKey(itemID string) {
 	var kept []SSHKeyEntry
-	for _, e := range s.SSHKeys {
+	for i := range s.SSHKeys {
+		e := &s.SSHKeys[i]
 		if e.ItemID != itemID {
-			kept = append(kept, e)
+			kept = append(kept, *e)
 		}
 	}
 	s.SSHKeys = kept
@@ -384,9 +386,10 @@ func (s *State) RemoveStoredSSHKey(itemID string) {
 // RemoveNote removes a note entry by itemID.
 func (s *State) RemoveNote(itemID string) {
 	var kept []NoteEntry
-	for _, e := range s.Notes {
+	for i := range s.Notes {
+		e := &s.Notes[i]
 		if e.ItemID != itemID {
-			kept = append(kept, e)
+			kept = append(kept, *e)
 		}
 	}
 	s.Notes = kept
@@ -395,9 +398,10 @@ func (s *State) RemoveNote(itemID string) {
 // RemoveEnvByItemID removes an env entry by itemID.
 func (s *State) RemoveEnvByItemID(itemID string) {
 	var kept []EnvEntry
-	for _, e := range s.Envs {
+	for i := range s.Envs {
+		e := &s.Envs[i]
 		if e.ItemID != itemID {
-			kept = append(kept, e)
+			kept = append(kept, *e)
 		}
 	}
 	s.Envs = kept
