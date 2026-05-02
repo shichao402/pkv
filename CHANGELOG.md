@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.5.3] - 2026-05-02
+
 ### Added
 - 新增 `pkv get <folder> all`，一次性拉齐该 folder 下的 SSH keys / env 产物 / config notes。失败策略为"继续执行、最后聚合报错"：任意一个子阶段失败不会阻断其余两个，命令结束时若存在任何错误再以 `errors.Join` 聚合返回。交互模式里支持 `<folder> all` 简写
 
