@@ -393,7 +393,7 @@ func TestClientHelperProcess(t *testing.T) {
 
 	bwArgs := args[sep+1:]
 	if bwArgs[0] != "bw" {
-		fmt.Fprintf(os.Stderr, "unexpected command: %q\n", bwArgs[0])
+		_, _ = fmt.Fprintf(os.Stderr, "unexpected command: %q\n", bwArgs[0])
 		os.Exit(2)
 	}
 
@@ -401,7 +401,7 @@ func TestClientHelperProcess(t *testing.T) {
 	if logPath != "" {
 		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: test opens a test-configured log path
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "open log: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "open log: %v\n", err)
 			os.Exit(2)
 		}
 		_, _ = fmt.Fprintf(f, "bw %s|env=%s\n", strings.Join(bwArgs[1:], " "), os.Getenv("BW_SESSION"))
@@ -412,13 +412,13 @@ func TestClientHelperProcess(t *testing.T) {
 	if joined == "--version" {
 		switch os.Getenv("PKV_TEST_BW_SCENARIO") {
 		case "version_command_fails":
-			fmt.Fprint(os.Stderr, "permission denied\n")
+			_, _ = fmt.Fprint(os.Stderr, "permission denied\n")
 			os.Exit(1)
 		case "version_malformed_output":
-			fmt.Fprint(os.Stdout, "Bitwarden CLI\n")
+			_, _ = fmt.Fprint(os.Stdout, "Bitwarden CLI\n")
 			os.Exit(0)
 		default:
-			fmt.Fprint(os.Stdout, "2026.2.0\n")
+			_, _ = fmt.Fprint(os.Stdout, "2026.2.0\n")
 			os.Exit(0)
 		}
 	}
@@ -426,60 +426,60 @@ func TestClientHelperProcess(t *testing.T) {
 	switch os.Getenv("PKV_TEST_BW_SCENARIO") {
 	case "reuse_exported_session":
 		if joined == "--nointeraction --session valid-session list folders" {
-			fmt.Fprint(os.Stdout, `[{"id":"folder-1","name":"dev"}]`)
+			_, _ = fmt.Fprint(os.Stdout, `[{"id":"folder-1","name":"dev"}]`)
 			os.Exit(0)
 		}
 	case "refresh_expired_session":
 		switch joined {
 		case "--nointeraction --session expired-session list folders":
-			fmt.Fprint(os.Stderr, "Vault is locked.\n")
+			_, _ = fmt.Fprint(os.Stderr, "Vault is locked.\n")
 			os.Exit(1)
 		case "--nointeraction status":
-			fmt.Fprint(os.Stdout, `{"status":"locked","userEmail":"dev@example.com"}`)
+			_, _ = fmt.Fprint(os.Stdout, `{"status":"locked","userEmail":"dev@example.com"}`)
 			os.Exit(0)
 		case "unlock --raw":
-			fmt.Fprint(os.Stdout, "fresh-session\n")
+			_, _ = fmt.Fprint(os.Stdout, "fresh-session\n")
 			os.Exit(0)
 		}
 	case "exported_session_network_error":
 		if joined == "--nointeraction --session flaky-session list folders" {
-			fmt.Fprint(os.Stderr, "network unreachable\n")
+			_, _ = fmt.Fprint(os.Stderr, "network unreachable\n")
 			os.Exit(1)
 		}
 	case "sync_ok":
 		if strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync") {
-			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			_, _ = fmt.Fprint(os.Stdout, "Syncing complete\n")
 			os.Exit(0)
 		}
 	case "sync_create_ok":
 		switch {
 		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync"):
-			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			_, _ = fmt.Fprint(os.Stdout, "Syncing complete\n")
 			os.Exit(0)
 		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.Contains(joined, " create item "):
-			fmt.Fprint(os.Stdout, `{"id":"created-item"}`)
+			_, _ = fmt.Fprint(os.Stdout, `{"id":"created-item"}`)
 			os.Exit(0)
 		}
 	case "sync_edit_ok":
 		switch {
 		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync"):
-			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			_, _ = fmt.Fprint(os.Stdout, "Syncing complete\n")
 			os.Exit(0)
 		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.Contains(joined, " edit item item-1 "):
-			fmt.Fprint(os.Stdout, `{"success":true}`)
+			_, _ = fmt.Fprint(os.Stdout, `{"success":true}`)
 			os.Exit(0)
 		}
 	case "sync_delete_ok":
 		switch {
 		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " sync"):
-			fmt.Fprint(os.Stdout, "Syncing complete\n")
+			_, _ = fmt.Fprint(os.Stdout, "Syncing complete\n")
 			os.Exit(0)
 		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " delete item item-1"):
-			fmt.Fprint(os.Stdout, `{"success":true}`)
+			_, _ = fmt.Fprint(os.Stdout, `{"success":true}`)
 			os.Exit(0)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "unexpected bw args for %s: %q\n", os.Getenv("PKV_TEST_BW_SCENARIO"), joined)
+	_, _ = fmt.Fprintf(os.Stderr, "unexpected bw args for %s: %q\n", os.Getenv("PKV_TEST_BW_SCENARIO"), joined)
 	os.Exit(2)
 }

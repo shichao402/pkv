@@ -13,10 +13,10 @@ func TestOpenEditor(t *testing.T) {
 
 		// Set a simple editor that just exits (simulates empty edit)
 		oldEditor := os.Getenv("EDITOR")
-		defer os.Setenv("EDITOR", oldEditor)
+		defer func() { _ = os.Setenv("EDITOR", oldEditor) }()
 
 		// Use 'cat' as a no-op editor that just exits
-		os.Setenv("EDITOR", "cat")
+		_ = os.Setenv("EDITOR", "cat")
 
 		result, err := OpenEditor(initialContent)
 		if err != nil {
@@ -30,8 +30,8 @@ func TestOpenEditor(t *testing.T) {
 
 	t.Run("fallback to vi when EDITOR not set", func(t *testing.T) {
 		oldEditor := os.Getenv("EDITOR")
-		defer os.Setenv("EDITOR", oldEditor)
-		os.Unsetenv("EDITOR")
+		defer func() { _ = os.Setenv("EDITOR", oldEditor) }()
+		_ = os.Unsetenv("EDITOR")
 
 		// We can't easily test the fallback without actually running 'vi'
 		// So we just verify the function handles it gracefully by checking for errors
@@ -44,13 +44,13 @@ func TestOpenEditor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create temp file: %v", err)
 		}
-		defer os.Remove(tmpFile.Name())
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 		content := "test content"
 		if _, err := tmpFile.WriteString(content); err != nil {
 			t.Fatalf("write temp file: %v", err)
 		}
-		tmpFile.Close()
+		_ = tmpFile.Close()
 
 		// Read it back to verify
 		data, err := os.ReadFile(tmpFile.Name())
@@ -90,12 +90,12 @@ func TestOpenEditor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create temp file: %v", err)
 		}
-		defer os.Remove(tmpFile.Name())
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 		if _, err := tmpFile.WriteString(content); err != nil {
 			t.Fatalf("write: %v", err)
 		}
-		tmpFile.Close()
+		_ = tmpFile.Close()
 
 		data, err := os.ReadFile(tmpFile.Name())
 		if err != nil {
@@ -112,8 +112,8 @@ func TestOpenEditor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create temp file: %v", err)
 		}
-		defer os.Remove(tmpFile.Name())
-		tmpFile.Close()
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
+		_ = tmpFile.Close()
 
 		data, err := os.ReadFile(tmpFile.Name())
 		if err != nil {
@@ -131,12 +131,12 @@ func TestOpenEditor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create temp file: %v", err)
 		}
-		defer os.Remove(tmpFile.Name())
+		defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 		if _, err := tmpFile.WriteString(content); err != nil {
 			t.Fatalf("write: %v", err)
 		}
-		tmpFile.Close()
+		_ = tmpFile.Close()
 
 		data, err := os.ReadFile(tmpFile.Name())
 		if err != nil {

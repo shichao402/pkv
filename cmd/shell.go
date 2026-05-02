@@ -19,7 +19,7 @@ func runShell(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize interactive shell: %w", err)
 	}
-	defer rl.Close()
+	defer func() { _ = rl.Close() }()
 	rl.CaptureExitSignal()
 
 	fmt.Println("Interactive mode. Type 'help' for commands, 'exit' to quit.")
