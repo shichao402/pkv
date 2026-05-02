@@ -216,11 +216,11 @@ func verifyChecksum(filePath, expectedHash string) error {
 }
 
 // removeQuarantineAttr removes the macOS quarantine extended attribute.
-func removeQuarantineAttr(path string) {
+func removeQuarantineAttr(binPath string) {
 	if runtime.GOOS != "darwin" {
 		return
 	}
-	if err := exec.Command("xattr", "-cr", path).Run(); err != nil {
+	if err := exec.Command("xattr", "-cr", binPath).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove quarantine attribute: %v\n", err)
 	}
 }

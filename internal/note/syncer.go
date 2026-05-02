@@ -136,7 +136,7 @@ func validateTrackedRemoval(entry state.NoteEntry) error {
 	return nil
 }
 
-func planWrite(item types.Item, entry state.NoteEntry, tracked bool, targetDir, folder string) (plannedWrite, []string) {
+func planWrite(item types.Item, entry state.NoteEntry, tracked bool, targetDir, folder string) (plan plannedWrite, warnings []string) {
 	if item.Notes == "" {
 		return plannedWrite{}, []string{fmt.Sprintf("item '%s' has no note content", item.Name)}
 	}
@@ -455,7 +455,7 @@ func hashContent(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func currentFileHash(path string) (string, bool, error) {
+func currentFileHash(path string) (hash string, exists bool, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

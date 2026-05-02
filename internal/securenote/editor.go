@@ -35,7 +35,9 @@ func OpenEditor(initialContent string) (string, error) {
 
 	// Split editor command in case it contains args (e.g. "code --wait")
 	parts := strings.Fields(editor)
-	args := append(parts[1:], tmpPath)
+	args := make([]string, 0, len(parts))
+	args = append(args, parts[1:]...)
+	args = append(args, tmpPath)
 	cmd := exec.Command(parts[0], args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

@@ -148,7 +148,7 @@ func TestDeployAndRemoveArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read shell artifact: %v", err)
 	}
-	if string(shellData) == "" {
+	if len(shellData) == 0 {
 		t.Fatal("shell artifact should not be empty")
 	}
 
@@ -156,7 +156,7 @@ func TestDeployAndRemoveArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read powershell artifact: %v", err)
 	}
-	if string(psData) == "" {
+	if len(psData) == 0 {
 		t.Fatal("powershell artifact should not be empty")
 	}
 
