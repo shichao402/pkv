@@ -347,7 +347,7 @@ func newTestBWExecCommand(t *testing.T, scenario, logPath string) execCommandFun
 	t.Helper()
 	return func(name string, args ...string) *exec.Cmd {
 		cmdArgs := append([]string{"-test.run=TestClientHelperProcess", "--", name}, args...)
-		cmd := exec.Command(os.Args[0], cmdArgs...)
+		cmd := exec.Command(os.Args[0], cmdArgs...) //nolint:gosec // G204: test helper re-invokes the test binary with controlled args
 		cmd.Env = append(os.Environ(),
 			"GO_WANT_HELPER_PROCESS=1",
 			"PKV_TEST_BW_SCENARIO="+scenario,
@@ -399,7 +399,7 @@ func TestClientHelperProcess(t *testing.T) {
 
 	logPath := os.Getenv("PKV_TEST_BW_LOG")
 	if logPath != "" {
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: test opens a test-configured log path
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "open log: %v\n", err)
 			os.Exit(2)

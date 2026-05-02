@@ -38,7 +38,7 @@ func OpenEditor(initialContent string) (string, error) {
 	args := make([]string, 0, len(parts))
 	args = append(args, parts[1:]...)
 	args = append(args, tmpPath)
-	cmd := exec.Command(parts[0], args...)
+	cmd := exec.Command(parts[0], args...) //nolint:gosec // G204: user-provided $EDITOR binary is intentional
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
