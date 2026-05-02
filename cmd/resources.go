@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,9 +147,9 @@ var listFolderCmd = &cobra.Command{
 }
 
 var getCmd = &cobra.Command{
-	Use:     "get <folder> <ssh|env|note>",
+	Use:     "get <folder> <ssh|env|note|all>",
 	Short:   "Get resources from a Bitwarden folder",
-	Example: "  pkv get prod ssh\n  pkv get prod env\n  pkv get prod note",
+	Example: "  pkv get prod ssh\n  pkv get prod env\n  pkv get prod note\n  pkv get prod all",
 	Args:    cobra.ExactArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
@@ -159,10 +160,40 @@ var getCmd = &cobra.Command{
 			return getEnvCmd.RunE(getEnvCmd, []string{folder})
 		case "note":
 			return getNoteCmd.RunE(getNoteCmd, []string{folder})
+		case "all":
+			return runGetAll(folder)
 		default:
-			return fmt.Errorf("unknown resource type: %s (expected ssh, env, or note)", kind)
+			return fmt.Errorf("unknown resource type: %s (expected ssh, env, note, or all)", kind)
 		}
 	},
+}
+
+// runGetAll runs get ssh, get env, get note in sequence for the given folder.
+// It continues on error and aggregates all failures into a joined error at the end.
+// Each subcommand still performs its own auth/sync, but the BW_SESSION and
+// sync results are cached within one process, so the overhead is minimal.
+func runGetAll(folder string) error {
+	var errs []error
+
+	fmt.Println("=== SSH Keys ===")
+	if err := getSSHCmd.RunE(getSSHCmd, []string{folder}); err != nil {
+		fmt.Fprintf(os.Stderr, "get ssh failed: %v\n", err)
+		errs = append(errs, fmt.Errorf("ssh: %w", err))
+	}
+
+	fmt.Println("\n=== Env Artifacts ===")
+	if err := getEnvCmd.RunE(getEnvCmd, []string{folder}); err != nil {
+		fmt.Fprintf(os.Stderr, "get env failed: %v\n", err)
+		errs = append(errs, fmt.Errorf("env: %w", err))
+	}
+
+	fmt.Println("\n=== Config Notes ===")
+	if err := getNoteCmd.RunE(getNoteCmd, []string{folder}); err != nil {
+		fmt.Fprintf(os.Stderr, "get note failed: %v\n", err)
+		errs = append(errs, fmt.Errorf("note: %w", err))
+	}
+
+	return errors.Join(errs...)
 }
 
 var getSSHCmd = &cobra.Command{

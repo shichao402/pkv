@@ -83,6 +83,16 @@ func TestTranslateShellArgs(t *testing.T) {
 			want: []string{"list", "prod"},
 		},
 		{
+			name: "folder all",
+			args: []string{"prod", "all"},
+			want: []string{"get", "prod", "all"},
+		},
+		{
+			name:    "folder all rejects trailing args",
+			args:    []string{"prod", "all", "extra"},
+			wantErr: true,
+		},
+		{
 			name: "implicit get ssh",
 			args: []string{"prod", "ssh"},
 			want: []string{"get", "prod", "ssh"},

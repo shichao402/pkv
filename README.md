@@ -17,7 +17,7 @@
 
 ```bash
 pkv list [folder]
-pkv get <folder> <ssh|env|note>
+pkv get <folder> <ssh|env|note|all>
 pkv add <folder> <ssh|env|note>
 pkv edit <folder> <env|note> [name-or-id]
 pkv remove <folder> <ssh|env|note> [id...]
@@ -266,6 +266,7 @@ pkv list <folder>
 pkv get <folder> ssh
 pkv get <folder> env
 pkv get <folder> note
+pkv get <folder> all
 ```
 
 用途：
@@ -273,6 +274,7 @@ pkv get <folder> note
 - `ssh`：把远端 SSH Key 落到本地
 - `env`：把 `pkv.env` 物化为本地产物文件
 - `note`：把普通 Secure Note 同步到当前目录
+- `all`：一次性执行 ssh + env + note 三个子命令，失败不中断，末尾聚合报错
 
 ### `add`
 

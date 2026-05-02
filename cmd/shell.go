@@ -145,7 +145,7 @@ func resetShellCommandState() {
 
 func translateShellArgs(args []string) ([]string, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("usage: <folder> <list|get|add|edit|remove|clean|ssh|env|note> [args...]")
+		return nil, fmt.Errorf("usage: <folder> <list|all|get|add|edit|remove|clean|ssh|env|note> [args...]")
 	}
 	folder := args[0]
 	second := args[1]
@@ -157,6 +157,11 @@ func translateShellArgs(args []string) ([]string, error) {
 			return nil, fmt.Errorf("usage: <folder> list")
 		}
 		return []string{"list", folder}, nil
+	case second == "all":
+		if len(rest) > 0 {
+			return nil, fmt.Errorf("usage: <folder> all")
+		}
+		return []string{"get", folder, "all"}, nil
 	case isShellResourceKind(second):
 		return translateResourceFirstArgs(folder, second, rest)
 	default:
