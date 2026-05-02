@@ -12,6 +12,11 @@ const (
 // Other Secure Notes in the same folder are treated as config files to sync locally.
 const ReservedEnvNoteName = "pkv.env"
 
+// ReservedIncludeNoteName is the single Secure Note name used to declare cross-folder
+// include chains. Its body is plain text, one folder name per line, `#` comments and
+// blank lines ignored. The note itself is metadata and never written to disk.
+const ReservedIncludeNoteName = "pkv.include"
+
 // PKV type constants for the "pkv_type" custom field in Bitwarden.
 // This field is used to distinguish between env and note items
 // when both are stored as Secure Notes.
