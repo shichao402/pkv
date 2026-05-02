@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.5.2] - 2026-05-02
+
+### Changed
+- `.golangci.yml` 升级到 golangci-lint v2 schema（`linters.exclusions.paths/rules`），CI 使用 `golangci/golangci-lint-action@v7` + `version: v2.11`，解决 Go 1.25 下旧版本 linter 拒绝分析的问题
+- 多处数据结构读循环改为索引 + 指针访问（`cmd/resources.go`、`internal/state/state.go`），避免每次迭代复制 SSH/Env/Note 条目（136–152 字节）
+
+### Fixed
+- 修正 `cmd/resources.go` 里的 `Cancelled → Canceled`，以及若干 `usage: ...` 错误信息尾部标点、`fmt.Errorf` 首字母等 staticcheck ST1005/QF1001/QF1006 问题
+- `internal/securenote/editor.go` 的 `OpenEditor`：不再 append 到 `parts[1:]` 的底层数组（appendAssign），并在写临时文件失败时向调用方回传 `tmpFile.Close()` 的错误
+- `cmd/update.go`、`cmd/shell.go` 等处的 `defer f.Close()` / `defer rl.Close()` 以显式忽略形式关闭，满足 errcheck
+- 清理 `internal/key/parse_test.go` 未使用的测试常量，移除 `internal/key/bitwarden.go` 多余的 `[]byte()` 转换
+
 ## [v0.5.1] - 2026-05-01
 
 ### Docs
