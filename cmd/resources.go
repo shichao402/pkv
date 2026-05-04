@@ -333,7 +333,7 @@ var getEnvCmd = &cobra.Command{
 			chainNames[i] = f.Name
 		}
 		if len(chain) > 1 {
-			fmt.Printf("Expanded pkv.include: %s\n", strings.Join(chainNames, " -> "))
+			fmt.Printf("已展开 include：%s\n", strings.Join(chainNames, " -> "))
 		}
 
 		// Collect pkv.env body per folder on the chain. Missing env notes are
@@ -419,10 +419,22 @@ var getEnvCmd = &cobra.Command{
 			}
 		}
 
+		// Tag each written artifact with its provenance. When the chain is a
+		// single folder the write lines stay in the legacy format.
 		fmt.Printf("Wrote env artifacts for folder '%s'.\n", folder)
-		fmt.Printf("  JSON: %s\n", entry.JSONPath)
-		fmt.Printf("  Shell: %s\n", entry.ShellPath)
-		fmt.Printf("  PowerShell: %s\n", entry.PowerShellPath)
+		if len(chain) > 1 {
+			artifactSource := entry.SourceFolder
+			if artifactSource == "" {
+				artifactSource = folder
+			}
+			fmt.Printf("  [from: %s] JSON: %s\n", artifactSource, entry.JSONPath)
+			fmt.Printf("  [from: %s] Shell: %s\n", artifactSource, entry.ShellPath)
+			fmt.Printf("  [from: %s] PowerShell: %s\n", artifactSource, entry.PowerShellPath)
+		} else {
+			fmt.Printf("  JSON: %s\n", entry.JSONPath)
+			fmt.Printf("  Shell: %s\n", entry.ShellPath)
+			fmt.Printf("  PowerShell: %s\n", entry.PowerShellPath)
+		}
 		return nil
 	},
 }
@@ -457,7 +469,7 @@ var getNoteCmd = &cobra.Command{
 			chainNames[i] = f.Name
 		}
 		if len(chain) > 1 {
-			fmt.Printf("Expanded pkv.include: %s\n", strings.Join(chainNames, " -> "))
+			fmt.Printf("已展开 include：%s\n", strings.Join(chainNames, " -> "))
 		}
 
 		// Per-folder config notes, already filtered to exclude pkv.env /
@@ -514,7 +526,11 @@ var getNoteCmd = &cobra.Command{
 		fmt.Printf("Synced %d note(s) to %s\n", synced, cwd)
 		if len(chain) > 1 {
 			for _, it := range merged.Items {
-				fmt.Printf("  %s [from: %s]\n", it.Item.Name, sourceByID[it.Item.ID])
+				source := sourceByID[it.Item.ID]
+				if source == "" {
+					source = folder
+				}
+				fmt.Printf("  [from: %s] %s\n", source, filepath.Join(cwd, it.Item.Name))
 			}
 		}
 		return nil
