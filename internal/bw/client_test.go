@@ -233,6 +233,32 @@ func TestFilterNonEnvNotes(t *testing.T) {
 	}
 }
 
+func TestFilterConfigNotes_ExcludesReservedMetadata(t *testing.T) {
+	envField := types.CustomField{Name: types.PKVFieldName, Value: types.PKVTypeEnv}
+	items := []types.Item{
+		{ID: "1", Type: types.ItemTypeSecureNote, Name: types.ReservedEnvNoteName, Fields: []types.CustomField{envField}},
+		{ID: "2", Type: types.ItemTypeSecureNote, Name: types.ReservedIncludeNoteName},
+		{ID: "3", Type: types.ItemTypeSecureNote, Name: "app.env.json"},
+		{ID: "4", Type: types.ItemTypeSecureNote, Name: "notes/readme.md"},
+		{ID: "5", Type: types.ItemTypeLogin, Name: "login"},
+	}
+
+	got := FilterConfigNotes(items)
+	if len(got) != 2 {
+		t.Fatalf("FilterConfigNotes() returned %d items, want 2", len(got))
+	}
+	names := map[string]bool{}
+	for _, item := range got {
+		if item.Name == types.ReservedEnvNoteName || item.Name == types.ReservedIncludeNoteName {
+			t.Errorf("FilterConfigNotes() returned reserved metadata note %q", item.Name)
+		}
+		names[item.Name] = true
+	}
+	if !names["app.env.json"] || !names["notes/readme.md"] {
+		t.Errorf("FilterConfigNotes() missing config notes; got %v", names)
+	}
+}
+
 func TestBaseEncode(t *testing.T) {
 	tests := []struct {
 		name    string

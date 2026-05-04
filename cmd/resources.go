@@ -446,19 +446,40 @@ var getNoteCmd = &cobra.Command{
 			return fmt.Errorf("sync failed: %w", err)
 		}
 
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
+		// Walk pkv.include chain. chain[0] is always the current folder.
+		chain, err := client.LoadIncludeChain(session, folder)
 		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
+			return err
 		}
 
-		fmt.Println("Listing notes...")
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
+		chainNames := make([]string, len(chain))
+		for i, f := range chain {
+			chainNames[i] = f.Name
+		}
+		if len(chain) > 1 {
+			fmt.Printf("Expanded pkv.include: %s\n", strings.Join(chainNames, " -> "))
 		}
 
-		notes := bw.FilterConfigNotes(items)
+		// Per-folder config notes, already filtered to exclude pkv.env /
+		// pkv.include so the merge operates purely on disk-bound items.
+		itemsByFolder := make(map[string][]bwtypes.Item, len(chain))
+		for _, f := range chain {
+			items, err := client.ListItems(session, f.ID)
+			if err != nil {
+				return fmt.Errorf("list items for folder '%s': %w", f.Name, err)
+			}
+			itemsByFolder[f.Name] = bw.FilterConfigNotes(items)
+		}
+
+		merged := note.MergeNoteItems(chainNames, itemsByFolder)
+
+		if len(merged.Conflicts) > 0 {
+			fmt.Println("Note overrides:")
+			for _, c := range merged.Conflicts {
+				fmt.Printf("  %s: winner=%s shadowed=%s\n", c.Name, c.Winner, strings.Join(c.Losers, ","))
+			}
+		}
+
 		cwd, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("get working directory failed: %w", err)
@@ -466,6 +487,15 @@ var getNoteCmd = &cobra.Command{
 		st, err := state.Load()
 		if err != nil {
 			return fmt.Errorf("load state failed: %w", err)
+		}
+
+		// Flatten merged items for the syncer. Syncer keys by item.ID; names
+		// are already unique across the merged set (first-wins).
+		notes := make([]bwtypes.Item, 0, len(merged.Items))
+		sourceByID := make(map[string]string, len(merged.Items))
+		for _, it := range merged.Items {
+			notes = append(notes, it.Item)
+			sourceByID[it.Item.ID] = it.Source
 		}
 
 		syncer := note.NewSyncer(st)
@@ -482,6 +512,11 @@ var getNoteCmd = &cobra.Command{
 			return nil
 		}
 		fmt.Printf("Synced %d note(s) to %s\n", synced, cwd)
+		if len(chain) > 1 {
+			for _, it := range merged.Items {
+				fmt.Printf("  %s [from: %s]\n", it.Item.Name, sourceByID[it.Item.ID])
+			}
+		}
 		return nil
 	},
 }

@@ -262,8 +262,17 @@ func FilterNonEnvNotes(items []types.Item) []types.Item {
 }
 
 // FilterConfigNotes returns config-file notes stored as regular Secure Notes.
+// Excludes the reserved metadata notes (pkv.env, pkv.include), which are never
+// written to disk as config artifacts.
 func FilterConfigNotes(items []types.Item) []types.Item {
-	return FilterNonEnvNotes(items)
+	var result []types.Item
+	for _, item := range FilterNonEnvNotes(items) {
+		if item.Name == types.ReservedIncludeNoteName {
+			continue
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 func (c *Client) getStatus() (*types.Status, error) {
