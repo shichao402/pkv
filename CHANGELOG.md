@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.6.0] - 2026-05-04
+
+### Added
+- `pkv.include` 机制：在某个 folder 下放一条保留名为 `pkv.include` 的 Secure Note（每行一个 folder 名，`#` 开头为注释），`pkv get <folder>` 会把被 include 的 folder 的 `pkv.env` 与 config notes 一并合并落盘，无需在多个项目里重复维护同一份共享配置
+- include 链最多支持 3 层传递，检测到环时硬失败并打印完整链路；所有未找到 / 同名 folder 在预检阶段聚合报错
+- 冲突语义固化为「当前 folder 胜出，被 include 提供默认值」；多 include 之间按 `pkv.include` 内声明顺序决定优先级；冲突信息在预检阶段聚合输出
+- `pkv get <folder>` 日志新增展开链提示与 `[from: <folder>]` 来源标签，`pkv list <folder>` 增加 Includes 段落，新增 `pkv list --resolved <folder>` 展开合并视图
+- `internal/state/state.go` 的 SSH / env / note 记录新增 `SourceFolder` 字段，标记 include 来源；发起拉取的 folder 仍是落盘归属方
+- 新增 `internal/bw` 端到端集成测试覆盖 happy path、当前 folder 胜出的冲突场景、环路硬失败、以及缺失 folder / 重名 folder 的聚合预检
+
+### Changed
+- include 只作用于 `env` 与 `note`；`ssh` 与 `add` 类写操作不展开 include，维持显式 folder 归属
+
 ## [v0.5.3] - 2026-05-02
 
 ### Added
