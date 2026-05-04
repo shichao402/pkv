@@ -302,8 +302,9 @@ func (s *State) FindSyncedNotesByFolder(folder string) []NoteEntry {
 
 // FindNoteEntry returns the tracked note entry for the given item within a folder/target dir.
 func (s *State) FindNoteEntry(itemID, folder, targetDir string) *NoteEntry {
-	for i, e := range s.Notes {
-		if e.ItemID == itemID && e.Folder == folder && noteEntryMatchesTarget(e, targetDir) {
+	for i := range s.Notes {
+		e := &s.Notes[i]
+		if e.ItemID == itemID && e.Folder == folder && noteEntryMatchesTarget(*e, targetDir) {
 			return &s.Notes[i]
 		}
 	}
@@ -314,7 +315,8 @@ func (s *State) FindNoteEntry(itemID, folder, targetDir string) *NoteEntry {
 func (s *State) AddNote(entry NoteEntry) {
 	entry.SyncedAt = time.Now().Format(time.RFC3339)
 	// Replace existing entry for same item within the same folder/target dir.
-	for i, e := range s.Notes {
+	for i := range s.Notes {
+		e := &s.Notes[i]
 		if e.ItemID == entry.ItemID && e.Folder == entry.Folder && e.TargetDir == entry.TargetDir {
 			s.Notes[i] = entry
 			return
@@ -326,7 +328,8 @@ func (s *State) AddNote(entry NoteEntry) {
 // RemoveNoteForTarget removes a note entry by itemID within the given folder/target dir.
 func (s *State) RemoveNoteForTarget(itemID, folder, targetDir string) {
 	var kept []NoteEntry
-	for _, e := range s.Notes {
+	for i := range s.Notes {
+		e := s.Notes[i]
 		if e.ItemID != itemID || e.Folder != folder || !noteEntryMatchesTarget(e, targetDir) {
 			kept = append(kept, e)
 		}
@@ -337,7 +340,8 @@ func (s *State) RemoveNoteForTarget(itemID, folder, targetDir string) {
 // RemoveNotesByTarget removes all note entries for the given folder/target dir.
 func (s *State) RemoveNotesByTarget(folder, targetDir string) {
 	var kept []NoteEntry
-	for _, e := range s.Notes {
+	for i := range s.Notes {
+		e := s.Notes[i]
 		if e.Folder != folder || !noteEntryMatchesTarget(e, targetDir) {
 			kept = append(kept, e)
 		}
