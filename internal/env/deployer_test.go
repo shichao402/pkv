@@ -203,3 +203,92 @@ func TestArtifactPathsUseHome(t *testing.T) {
 		t.Fatalf("artifact paths not under %s", base)
 	}
 }
+
+func TestFirstContributingSource(t *testing.T) {
+	t.Run("returns first chain folder that actually contributed", func(t *testing.T) {
+		result := MergeResult{
+			Chain: []string{"proj-a", "shared-infra", "deep-lib"},
+			Vars: []SourcedEnvVar{
+				{EnvVar: EnvVar{Key: "K1", Value: "v"}, Source: "deep-lib"},
+				{EnvVar: EnvVar{Key: "K2", Value: "v"}, Source: "shared-infra"},
+			},
+		}
+		if got := firstContributingSource(result); got != "shared-infra" {
+			t.Errorf("firstContributingSource = %q, want %q (chain order, not var order)", got, "shared-infra")
+		}
+	})
+
+	t.Run("current folder included in chain but not in sources is skipped", func(t *testing.T) {
+		result := MergeResult{
+			Chain: []string{"proj-a", "shared"},
+			Vars: []SourcedEnvVar{
+				{EnvVar: EnvVar{Key: "K1"}, Source: "shared"},
+			},
+		}
+		if got := firstContributingSource(result); got != "shared" {
+			t.Errorf("firstContributingSource = %q, want %q", got, "shared")
+		}
+	})
+
+	t.Run("empty vars returns empty string", func(t *testing.T) {
+		result := MergeResult{Chain: []string{"proj-a"}, Vars: nil}
+		if got := firstContributingSource(result); got != "" {
+			t.Errorf("firstContributingSource = %q, want empty", got)
+		}
+	})
+}
+
+func TestDeployMergedAttribution(t *testing.T) {
+	t.Run("hasCurrent=true leaves SourceFolder empty", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		st := &state.State{}
+		d := NewDeployer(st)
+		result := MergeResult{
+			Chain: []string{"proj-a", "shared"},
+			Vars: []SourcedEnvVar{
+				{EnvVar: EnvVar{Key: "K1", Value: "v1"}, Source: "proj-a"},
+				{EnvVar: EnvVar{Key: "K2", Value: "v2"}, Source: "shared"},
+			},
+		}
+		entry, err := d.DeployMerged("proj-a", result, types.Item{ID: "env-item", Name: "pkv.env"}, true)
+		if err != nil {
+			t.Fatalf("DeployMerged: %v", err)
+		}
+		if entry.ItemID != "env-item" {
+			t.Errorf("ItemID = %q, want %q", entry.ItemID, "env-item")
+		}
+		if entry.SourceFolder != "" {
+			t.Errorf("SourceFolder = %q, want empty when chain[0] owns pkv.env", entry.SourceFolder)
+		}
+	})
+
+	t.Run("hasCurrent=false records first contributing chain folder", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+
+		st := &state.State{}
+		d := NewDeployer(st)
+		result := MergeResult{
+			Chain: []string{"thin-proj", "shared-infra", "deep-lib"},
+			Vars: []SourcedEnvVar{
+				{EnvVar: EnvVar{Key: "K1", Value: "v1"}, Source: "deep-lib"},
+				{EnvVar: EnvVar{Key: "K2", Value: "v2"}, Source: "shared-infra"},
+			},
+		}
+		entry, err := d.DeployMerged("thin-proj", result, types.Item{}, false)
+		if err != nil {
+			t.Fatalf("DeployMerged: %v", err)
+		}
+		if entry.ItemID != "" {
+			t.Errorf("ItemID = %q, want empty when chain[0] has no pkv.env", entry.ItemID)
+		}
+		if entry.Name != types.ReservedEnvNoteName {
+			t.Errorf("Name = %q, want %q placeholder", entry.Name, types.ReservedEnvNoteName)
+		}
+		if entry.SourceFolder != "shared-infra" {
+			t.Errorf("SourceFolder = %q, want %q", entry.SourceFolder, "shared-infra")
+		}
+	})
+}

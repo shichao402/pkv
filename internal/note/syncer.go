@@ -18,10 +18,11 @@ type Syncer struct {
 }
 
 type syncPlan struct {
-	targetDir string
-	folder    string
-	deletes   []state.NoteEntry
-	writes    []plannedWrite
+	targetDir   string
+	folder      string
+	sourcesByID map[string]string
+	deletes     []state.NoteEntry
+	writes      []plannedWrite
 }
 
 type plannedWrite struct {
@@ -56,12 +57,26 @@ func NewSyncer(st *state.State) *Syncer {
 // SyncFolder reconciles all config notes from a folder into the target directory.
 // Existing tracked files are updated in place, remote renames are reflected locally,
 // and deleted remote notes are removed from the target directory.
+//
+// This variant does not record per-note SourceFolder attribution; every synced
+// note is treated as owned by `folder`. Callers that resolve notes through a
+// pkv.include chain should use SyncFolderWithSources instead so state records
+// can reflect which chain folder actually contributed each note.
 func (s *Syncer) SyncFolder(items []types.Item, targetDir, folder string) (int, error) {
+	return s.SyncFolderWithSources(items, nil, targetDir, folder)
+}
+
+// SyncFolderWithSources is the include-aware entry point. sourcesByID maps
+// each item ID to the folder on the include chain that actually supplied it;
+// IDs absent from the map (or a nil map) are treated as owned by `folder`
+// itself, which keeps the record's SourceFolder empty. This matches the
+// attribution semantics documented on state.NoteEntry.
+func (s *Syncer) SyncFolderWithSources(items []types.Item, sourcesByID map[string]string, targetDir, folder string) (int, error) {
 	if absTargetDir, err := filepath.Abs(targetDir); err == nil {
 		targetDir = absTargetDir
 	}
 
-	plan, err := s.planSync(items, targetDir, folder)
+	plan, err := s.planSync(items, sourcesByID, targetDir, folder)
 	if err != nil {
 		return 0, err
 	}
@@ -72,7 +87,7 @@ func (s *Syncer) SyncFolder(items []types.Item, targetDir, folder string) (int, 
 	return len(plan.writes), nil
 }
 
-func (s *Syncer) planSync(items []types.Item, targetDir, folder string) (*syncPlan, error) {
+func (s *Syncer) planSync(items []types.Item, sourcesByID map[string]string, targetDir, folder string) (*syncPlan, error) {
 	tracked := s.state.FindSyncedNotes(folder, targetDir)
 	trackedByID := make(map[string]state.NoteEntry, len(tracked))
 	for _, entry := range tracked {
@@ -84,7 +99,7 @@ func (s *Syncer) planSync(items []types.Item, targetDir, folder string) (*syncPl
 		remoteByID[item.ID] = item
 	}
 
-	plan := &syncPlan{targetDir: targetDir, folder: folder}
+	plan := &syncPlan{targetDir: targetDir, folder: folder, sourcesByID: sourcesByID}
 	issues := make([]string, 0)
 	removedPaths := make(map[string]struct{})
 
@@ -431,13 +446,20 @@ func (s *Syncer) applySyncPlan(plan *syncPlan) error {
 		s.state.RemoveNoteForTarget(entry.ItemID, plan.folder, plan.targetDir)
 	}
 	for _, write := range plan.writes {
+		source := ""
+		if plan.sourcesByID != nil {
+			if s, ok := plan.sourcesByID[write.itemID]; ok && s != plan.folder {
+				source = s
+			}
+		}
 		s.state.AddNote(state.NoteEntry{
-			ItemID:      write.itemID,
-			Folder:      plan.folder,
-			TargetDir:   plan.targetDir,
-			FileName:    write.fileName,
-			FilePath:    write.filePath,
-			ContentHash: write.contentHash,
+			ItemID:       write.itemID,
+			Folder:       plan.folder,
+			SourceFolder: source,
+			TargetDir:    plan.targetDir,
+			FileName:     write.fileName,
+			FilePath:     write.filePath,
+			ContentHash:  write.contentHash,
 		})
 	}
 	return nil

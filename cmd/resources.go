@@ -499,7 +499,7 @@ var getNoteCmd = &cobra.Command{
 		}
 
 		syncer := note.NewSyncer(st)
-		synced, err := syncer.SyncFolder(notes, cwd, folder)
+		synced, err := syncer.SyncFolderWithSources(notes, sourceByID, cwd, folder)
 		if err != nil {
 			return err
 		}

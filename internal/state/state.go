@@ -9,31 +9,46 @@ import (
 
 const stateFileName = ".pkv/state.json"
 
+// SourceFolder attribution semantics (shared across all entry types below):
+//
+// Entries are always indexed by the initiating folder (the current project
+// folder the user ran the command against). SourceFolder names the folder
+// that actually contributed the record via a pkv.include chain. When the
+// record comes from the initiating folder itself (no include involvement,
+// or the include chain only supplemented a record the current folder
+// already owned), SourceFolder is empty.
+//
+// Cleanup and reverse-lookup still scope by Folder, so include-sourced
+// entries are removed when the initiating project is cleaned.
+
 type SSHKeyEntry struct {
-	ItemID      string   `json:"item_id"`
-	KeyName     string   `json:"key_name"`
-	Folder      string   `json:"folder,omitempty"`
-	KeyFile     string   `json:"key_file"`
-	PubFile     string   `json:"pub_file"`
-	Hosts       []string `json:"hosts"`
-	AddedAt     string   `json:"added_at"`
-	Fingerprint string   `json:"fingerprint,omitempty"` // SHA256 fingerprint of stored SSH key
-	StoredAt    string   `json:"stored_at,omitempty"`   // When key was stored in Bitwarden
+	ItemID       string   `json:"item_id"`
+	KeyName      string   `json:"key_name"`
+	Folder       string   `json:"folder,omitempty"`
+	SourceFolder string   `json:"source_folder,omitempty"` // Folder that provided this key via pkv.include; empty if from Folder itself
+	KeyFile      string   `json:"key_file"`
+	PubFile      string   `json:"pub_file"`
+	Hosts        []string `json:"hosts"`
+	AddedAt      string   `json:"added_at"`
+	Fingerprint  string   `json:"fingerprint,omitempty"` // SHA256 fingerprint of stored SSH key
+	StoredAt     string   `json:"stored_at,omitempty"`   // When key was stored in Bitwarden
 }
 
 type NoteEntry struct {
-	ItemID      string `json:"item_id"`
-	Folder      string `json:"folder,omitempty"`
-	TargetDir   string `json:"target_dir,omitempty"`
-	FileName    string `json:"file_name"`
-	FilePath    string `json:"file_path"`
-	ContentHash string `json:"content_hash,omitempty"`
-	SyncedAt    string `json:"synced_at"`
+	ItemID       string `json:"item_id"`
+	Folder       string `json:"folder,omitempty"`
+	SourceFolder string `json:"source_folder,omitempty"` // Folder that provided this note via pkv.include; empty if from Folder itself
+	TargetDir    string `json:"target_dir,omitempty"`
+	FileName     string `json:"file_name"`
+	FilePath     string `json:"file_path"`
+	ContentHash  string `json:"content_hash,omitempty"`
+	SyncedAt     string `json:"synced_at"`
 }
 
 type EnvEntry struct {
 	ItemID         string   `json:"item_id"`
 	Folder         string   `json:"folder,omitempty"`
+	SourceFolder   string   `json:"source_folder,omitempty"` // Folder that provided this env payload via pkv.include; empty if Folder owns its own pkv.env
 	Name           string   `json:"name"`
 	Keys           []string `json:"keys,omitempty"`
 	JSONPath       string   `json:"json_path,omitempty"`

@@ -497,3 +497,71 @@ func TestRemove(t *testing.T) {
 		}
 	})
 }
+
+// TestSyncFolderWithSourcesRecordsAttribution covers the #119 note syncer
+// contract: when sourcesByID maps an item ID to a folder different from the
+// initiating folder, the persisted NoteEntry carries that source; when the
+// item came from the current folder itself (or is absent from the map), the
+// entry's SourceFolder stays empty.
+func TestSyncFolderWithSourcesRecordsAttribution(t *testing.T) {
+	st := &state.State{}
+	syncer := NewSyncer(st)
+	dir := t.TempDir()
+
+	items := []types.Item{
+		{ID: "own", Name: "own.yml", Notes: "a: 1\n"},
+		{ID: "included", Name: "shared.yml", Notes: "b: 2\n"},
+		{ID: "unmapped", Name: "extra.yml", Notes: "c: 3\n"},
+	}
+	sources := map[string]string{
+		"own":      "proj-a",
+		"included": "shared-infra",
+		// "unmapped" absent on purpose
+	}
+
+	if _, err := syncer.SyncFolderWithSources(items, sources, dir, "proj-a"); err != nil {
+		t.Fatalf("SyncFolderWithSources: %v", err)
+	}
+
+	byID := make(map[string]state.NoteEntry, len(st.Notes))
+	for _, n := range st.Notes {
+		byID[n.ItemID] = n
+	}
+
+	if got := byID["own"].SourceFolder; got != "" {
+		t.Errorf("own SourceFolder = %q, want empty (owned by initiating folder)", got)
+	}
+	if got := byID["included"].SourceFolder; got != "shared-infra" {
+		t.Errorf("included SourceFolder = %q, want %q", got, "shared-infra")
+	}
+	if got := byID["unmapped"].SourceFolder; got != "" {
+		t.Errorf("unmapped SourceFolder = %q, want empty (no entry in sources map)", got)
+	}
+
+	// All entries must still be indexed by the initiating folder so cleanup
+	// scopes correctly.
+	for id, entry := range byID {
+		if entry.Folder != "proj-a" {
+			t.Errorf("entry %q Folder = %q, want %q", id, entry.Folder, "proj-a")
+		}
+	}
+}
+
+// TestSyncFolderNilSourcesEquivalentToPlain confirms that SyncFolder is a thin
+// wrapper that leaves SourceFolder empty on every record.
+func TestSyncFolderNilSourcesEquivalentToPlain(t *testing.T) {
+	st := &state.State{}
+	syncer := NewSyncer(st)
+	dir := t.TempDir()
+
+	items := []types.Item{{ID: "i1", Name: "a.yml", Notes: "k: v\n"}}
+	if _, err := syncer.SyncFolder(items, dir, "proj-a"); err != nil {
+		t.Fatalf("SyncFolder: %v", err)
+	}
+	if len(st.Notes) != 1 {
+		t.Fatalf("expected 1 note, got %d", len(st.Notes))
+	}
+	if got := st.Notes[0].SourceFolder; got != "" {
+		t.Errorf("SourceFolder = %q, want empty for non-include sync", got)
+	}
+}

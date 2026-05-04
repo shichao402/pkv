@@ -1,6 +1,9 @@
 package state
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -569,4 +572,193 @@ func TestRemoveNoteMultiple(t *testing.T) {
 			t.Errorf("RemoveNote() corrupted note order")
 		}
 	})
+}
+
+// TestSourceFolderJSONRoundTrip covers the #119 wire format: SourceFolder is
+// persisted when set, omitted via omitempty when empty, and back-compatible
+// with state files written before the field was introduced.
+func TestSourceFolderJSONRoundTrip(t *testing.T) {
+	t.Run("populated SourceFolder round-trips", func(t *testing.T) {
+		original := &State{
+			SSHKeys: []SSHKeyEntry{
+				{ItemID: "ssh-1", Folder: "proj-a", SourceFolder: "shared-infra", KeyName: "k"},
+			},
+			Notes: []NoteEntry{
+				{ItemID: "note-1", Folder: "proj-a", SourceFolder: "shared-infra", FileName: "f"},
+			},
+			Envs: []EnvEntry{
+				{ItemID: "env-1", Folder: "proj-a", SourceFolder: "shared-infra", Name: "pkv.env"},
+			},
+		}
+
+		data, err := json.Marshal(original)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+
+		var decoded State
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+
+		if got := decoded.SSHKeys[0].SourceFolder; got != "shared-infra" {
+			t.Errorf("SSHKey SourceFolder = %q, want %q", got, "shared-infra")
+		}
+		if got := decoded.Notes[0].SourceFolder; got != "shared-infra" {
+			t.Errorf("Note SourceFolder = %q, want %q", got, "shared-infra")
+		}
+		if got := decoded.Envs[0].SourceFolder; got != "shared-infra" {
+			t.Errorf("Env SourceFolder = %q, want %q", got, "shared-infra")
+		}
+	})
+
+	t.Run("empty SourceFolder is omitted from JSON", func(t *testing.T) {
+		s := &State{
+			SSHKeys: []SSHKeyEntry{{ItemID: "k", Folder: "proj-a"}},
+			Notes:   []NoteEntry{{ItemID: "n", Folder: "proj-a"}},
+			Envs:    []EnvEntry{{ItemID: "e", Folder: "proj-a"}},
+		}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if want := `source_folder`; containsBytes(data, want) {
+			t.Errorf("expected %q to be omitted when empty; got %s", want, string(data))
+		}
+	})
+
+	t.Run("legacy state.json without source_folder loads with empty field", func(t *testing.T) {
+		legacy := []byte(`{
+  "ssh_keys": [{"item_id": "k1", "folder": "proj-a", "key_name": "mk", "key_file": "/tmp/k", "pub_file": "/tmp/k.pub", "hosts": ["h1"], "added_at": ""}],
+  "notes": [{"item_id": "n1", "folder": "proj-a", "file_name": "c.yml", "file_path": "/tmp/c.yml", "synced_at": ""}],
+  "envs": [{"item_id": "e1", "folder": "proj-a", "name": "pkv.env", "set_at": ""}]
+}`)
+		var decoded State
+		if err := json.Unmarshal(legacy, &decoded); err != nil {
+			t.Fatalf("unmarshal legacy: %v", err)
+		}
+		if got := decoded.SSHKeys[0].SourceFolder; got != "" {
+			t.Errorf("legacy SSHKey SourceFolder = %q, want empty", got)
+		}
+		if got := decoded.Notes[0].SourceFolder; got != "" {
+			t.Errorf("legacy Note SourceFolder = %q, want empty", got)
+		}
+		if got := decoded.Envs[0].SourceFolder; got != "" {
+			t.Errorf("legacy Env SourceFolder = %q, want empty", got)
+		}
+	})
+}
+
+// TestSourceFolderSurvivesSaveLoad drives the full Save+Load cycle through a
+// temp $HOME so we cover statePath() wiring, not just json.Marshal/Unmarshal.
+func TestSourceFolderSurvivesSaveLoad(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	p, err := statePath()
+	if err != nil {
+		t.Fatalf("statePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	s := &State{path: p}
+	s.AddNote(NoteEntry{ItemID: "n1", Folder: "proj-a", SourceFolder: "shared", FileName: "c.yml", FilePath: "/tmp/c.yml"})
+	s.AddEnv(EnvEntry{ItemID: "e1", Folder: "proj-a", SourceFolder: "shared", Name: "pkv.env"})
+	s.AddSSHKey(SSHKeyEntry{ItemID: "k1", Folder: "proj-a", SourceFolder: "shared", KeyFile: "/tmp/k"})
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := loaded.Notes[0].SourceFolder; got != "shared" {
+		t.Errorf("Note.SourceFolder = %q, want %q", got, "shared")
+	}
+	if got := loaded.Envs[0].SourceFolder; got != "shared" {
+		t.Errorf("Env.SourceFolder = %q, want %q", got, "shared")
+	}
+	if got := loaded.SSHKeys[0].SourceFolder; got != "shared" {
+		t.Errorf("SSHKey.SourceFolder = %q, want %q", got, "shared")
+	}
+}
+
+// TestAddEnvPreservesSourceFolderOnReplace confirms that updating an existing
+// env record replaces SourceFolder with the new attribution (which matters
+// when an include chain changes between runs).
+func TestAddEnvPreservesSourceFolderOnReplace(t *testing.T) {
+	s := &State{
+		Envs: []EnvEntry{
+			{ItemID: "env-1", Folder: "proj-a", SourceFolder: "shared-v1", Name: "old"},
+		},
+	}
+	s.AddEnv(EnvEntry{ItemID: "env-1", Folder: "proj-a", SourceFolder: "shared-v2", Name: "new"})
+
+	if len(s.Envs) != 1 {
+		t.Fatalf("expected 1 env entry after replace, got %d", len(s.Envs))
+	}
+	if got := s.Envs[0].SourceFolder; got != "shared-v2" {
+		t.Errorf("SourceFolder = %q, want %q after replace", got, "shared-v2")
+	}
+}
+
+// TestRemoveEnvsByFolderRemovesIncludeSourced confirms that cleanup keyed on
+// the initiating folder also clears include-sourced entries — the records
+// are indexed by Folder, not SourceFolder, by design.
+func TestRemoveEnvsByFolderRemovesIncludeSourced(t *testing.T) {
+	s := &State{
+		Envs: []EnvEntry{
+			{ItemID: "env-a", Folder: "proj-a", SourceFolder: "shared", Name: "pkv.env"},
+			{ItemID: "env-b", Folder: "proj-b", Name: "pkv.env"},
+		},
+	}
+	s.RemoveEnvsByFolder("proj-a")
+	if len(s.Envs) != 1 {
+		t.Fatalf("expected 1 env entry after removal, got %d", len(s.Envs))
+	}
+	if s.Envs[0].Folder != "proj-b" {
+		t.Errorf("remaining Folder = %q, want %q", s.Envs[0].Folder, "proj-b")
+	}
+}
+
+// TestFindSyncedNotesIgnoresSourceFolder confirms that cleanup/lookup still
+// operates on Folder + TargetDir; SourceFolder is purely attribution metadata.
+func TestFindSyncedNotesIgnoresSourceFolder(t *testing.T) {
+	s := &State{
+		Notes: []NoteEntry{
+			{ItemID: "n1", Folder: "proj-a", SourceFolder: "shared", TargetDir: "/tmp/work", FileName: "x", FilePath: "/tmp/work/x"},
+			{ItemID: "n2", Folder: "proj-b", TargetDir: "/tmp/work", FileName: "y", FilePath: "/tmp/work/y"},
+		},
+	}
+	matched := s.FindSyncedNotes("proj-a", "/tmp/work")
+	if len(matched) != 1 {
+		t.Fatalf("expected 1 match, got %d", len(matched))
+	}
+	if matched[0].ItemID != "n1" {
+		t.Errorf("matched ItemID = %q, want %q", matched[0].ItemID, "n1")
+	}
+}
+
+func containsBytes(data []byte, needle string) bool {
+	return len(needle) > 0 && len(data) >= len(needle) && indexBytes(data, needle) >= 0
+}
+
+func indexBytes(data []byte, needle string) int {
+	for i := 0; i+len(needle) <= len(data); i++ {
+		match := true
+		for j := 0; j < len(needle); j++ {
+			if data[i+j] != needle[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
 }

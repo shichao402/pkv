@@ -147,6 +147,17 @@ func (d *Deployer) Deploy(folder string, item types.Item) (state.EnvEntry, error
 // currentItem is the `pkv.env` item from chain[0] if present; pass the zero
 // types.Item (hasCurrent=false) to signal that chain[0] has no env note.
 //
+// SourceFolder attribution:
+//
+//   - hasCurrent=true: chain[0] owns its own pkv.env, so the state record's
+//     SourceFolder stays empty (the record and the folder it indexes are the
+//     same). Per-key overrides from deeper folders are visible in
+//     result.Conflicts but not recorded per-var in state (EnvEntry is
+//     folder-scoped, not key-scoped).
+//   - hasCurrent=false: chain[0] is a thin project; env comes entirely from
+//     includes. SourceFolder is set to the first folder on the chain that
+//     actually contributed a value (deterministic via chain order).
+//
 // The caller is responsible for surfacing result.Conflicts to the user; this
 // function does not log them.
 func (d *Deployer) DeployMerged(folder string, result MergeResult, currentItem types.Item, hasCurrent bool) (state.EnvEntry, error) {
@@ -195,15 +206,40 @@ func (d *Deployer) DeployMerged(folder string, result MergeResult, currentItem t
 	if hasCurrent {
 		entry.ItemID = currentItem.ID
 		entry.Name = currentItem.Name
+		// SourceFolder stays empty: the record belongs to chain[0] itself.
 	} else {
 		// No local pkv.env; the record still needs a stable name for list/clean
 		// UX. Use the reserved name as a placeholder so the existing Remove /
 		// FindEnvsByFolder code paths read cleanly.
 		entry.Name = types.ReservedEnvNoteName
+		// Record which folder actually supplied the env payload so list/clean
+		// UX can surface the attribution. Pick the first chain folder that
+		// appears as a Source among the merged vars; chain order is
+		// authoritative (chain[0] is the current folder, which by definition
+		// contributed nothing here).
+		entry.SourceFolder = firstContributingSource(result)
 	}
 	d.state.AddEnv(entry)
 	diag.Printf("merged env artifacts written for folder %q (chain=%v)", folder, result.Chain)
 	return entry, nil
+}
+
+// firstContributingSource returns the first folder on result.Chain that
+// appears as a Source in result.Vars. Used to attribute thin-project env
+// records (where chain[0] has no pkv.env of its own). Returns empty string
+// only if result.Vars is empty, which shouldn't happen because DeployMerged
+// is only reached when notesByFolder is non-empty.
+func firstContributingSource(result MergeResult) string {
+	contributors := make(map[string]bool, len(result.Vars))
+	for _, v := range result.Vars {
+		contributors[v.Source] = true
+	}
+	for _, folder := range result.Chain {
+		if contributors[folder] {
+			return folder
+		}
+	}
+	return ""
 }
 
 // Remove removes local env artifacts for a folder-scoped env note.
