@@ -282,7 +282,8 @@ func (e NoteEntry) IsSynced() bool {
 // When targetDir is non-empty, only entries for that target directory are returned.
 func (s *State) FindSyncedNotes(folder, targetDir string) []NoteEntry {
 	var matched []NoteEntry
-	for _, e := range s.Notes {
+	for i := range s.Notes {
+		e := s.Notes[i]
 		if !e.IsSynced() || e.Folder != folder {
 			continue
 		}

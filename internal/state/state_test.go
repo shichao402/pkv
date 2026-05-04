@@ -744,7 +744,7 @@ func TestFindSyncedNotesIgnoresSourceFolder(t *testing.T) {
 }
 
 func containsBytes(data []byte, needle string) bool {
-	return len(needle) > 0 && len(data) >= len(needle) && indexBytes(data, needle) >= 0
+	return needle != "" && len(data) >= len(needle) && indexBytes(data, needle) >= 0
 }
 
 func indexBytes(data []byte, needle string) int {

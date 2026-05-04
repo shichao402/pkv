@@ -90,8 +90,9 @@ func (s *Syncer) SyncFolderWithSources(items []types.Item, sourcesByID map[strin
 func (s *Syncer) planSync(items []types.Item, sourcesByID map[string]string, targetDir, folder string) (*syncPlan, error) {
 	tracked := s.state.FindSyncedNotes(folder, targetDir)
 	trackedByID := make(map[string]state.NoteEntry, len(tracked))
-	for _, entry := range tracked {
-		trackedByID[entry.ItemID] = entry
+	for i := range tracked {
+		entry := &tracked[i]
+		trackedByID[entry.ItemID] = *entry
 	}
 
 	remoteByID := make(map[string]types.Item, len(items))
@@ -103,7 +104,8 @@ func (s *Syncer) planSync(items []types.Item, sourcesByID map[string]string, tar
 	issues := make([]string, 0)
 	removedPaths := make(map[string]struct{})
 
-	for _, entry := range tracked {
+	for i := range tracked {
+		entry := tracked[i]
 		if _, ok := remoteByID[entry.ItemID]; ok {
 			continue
 		}
@@ -414,8 +416,9 @@ func displayPath(path, targetDir string) string {
 }
 
 func (s *Syncer) applySyncPlan(plan *syncPlan) error {
-	for _, entry := range plan.deletes {
-		if err := s.Remove(entry); err != nil {
+	for i := range plan.deletes {
+		entry := &plan.deletes[i]
+		if err := s.Remove(*entry); err != nil {
 			return fmt.Errorf("remove stale note '%s': %w", entry.FileName, err)
 		}
 	}
@@ -442,7 +445,8 @@ func (s *Syncer) applySyncPlan(plan *syncPlan) error {
 		}
 	}
 
-	for _, entry := range plan.deletes {
+	for i := range plan.deletes {
+		entry := &plan.deletes[i]
 		s.state.RemoveNoteForTarget(entry.ItemID, plan.folder, plan.targetDir)
 	}
 	for _, write := range plan.writes {

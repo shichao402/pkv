@@ -379,5 +379,5 @@ func TestFormatPath(t *testing.T) {
 		t.Errorf("formatPath = %q, want %q", got, want)
 	}
 	// sanity: %v renders as fmt.Sprintf("%v", ...) would, no panics
-	_ = fmt.Sprintf("%v", got)
+	_ = fmt.Sprintf("%v-suffix", got)
 }

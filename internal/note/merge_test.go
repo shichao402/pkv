@@ -198,7 +198,7 @@ func TestMergeNoteItems_EmptyChain(t *testing.T) {
 	if len(got.Items) != 0 || len(got.Conflicts) != 0 {
 		t.Errorf("expected empty merged result, got %+v", got)
 	}
-	if got.Chain != nil && len(got.Chain) != 0 {
+	if len(got.Chain) != 0 {
 		t.Errorf("expected empty chain, got %+v", got.Chain)
 	}
 }
