@@ -12,6 +12,7 @@ import (
 	"github.com/shichao402/pkv/internal/bw"
 	bwtypes "github.com/shichao402/pkv/internal/bw/types"
 	"github.com/shichao402/pkv/internal/env"
+	"github.com/shichao402/pkv/internal/include"
 	"github.com/shichao402/pkv/internal/key"
 	"github.com/shichao402/pkv/internal/note"
 	"github.com/shichao402/pkv/internal/pathutil"
@@ -26,6 +27,13 @@ var (
 	addNameFlag    string
 
 	addNoteFileFlag string
+
+	// listResolvedFlag expands pkv.include when listing a single folder.
+	// When false, list shows only the direct includes section and the
+	// folder's own items; when true, env/note are merged across the
+	// include chain and annotated with their source folder. SSH is
+	// deliberately not expanded (MVP boundary from #114).
+	listResolvedFlag bool
 )
 
 var listCmd = &cobra.Command{
@@ -121,6 +129,18 @@ var listFolderCmd = &cobra.Command{
 		}
 		notes := bw.FilterConfigNotes(items)
 
+		// Direct includes (declaration order, no transitive expansion). Only
+		// shown when the folder actually has a pkv.include note. Resolved
+		// view below handles multi-level expansion separately.
+		includeItem, hasInclude, err := include.FindIncludeNote(items)
+		if err != nil {
+			return err
+		}
+		var directIncludes []string
+		if hasInclude {
+			directIncludes = include.ParseLines(includeItem.Notes)
+		}
+
 		fmt.Printf("\nFolder '%s'\n\n", folder)
 		fmt.Printf("SSH keys: %d\n", len(sshKeys))
 		if hasEnv {
@@ -129,6 +149,13 @@ var listFolderCmd = &cobra.Command{
 			fmt.Printf("Env note: none (create one named '%s')\n", bwtypes.ReservedEnvNoteName)
 		}
 		fmt.Printf("Config notes: %d\n", len(notes))
+
+		if len(directIncludes) > 0 {
+			fmt.Println("\nIncludes:")
+			for _, name := range directIncludes {
+				fmt.Printf("  %s\n", name)
+			}
+		}
 
 		if len(sshKeys) > 0 {
 			fmt.Println("\nSSH:")
@@ -142,6 +169,99 @@ var listFolderCmd = &cobra.Command{
 				fmt.Printf("  %s  %s\n", item.ID, item.Name)
 			}
 		}
+
+		if !listResolvedFlag {
+			return nil
+		}
+
+		// --resolved: expand env + note across the pkv.include chain and
+		// annotate each entry with its source folder. SSH is intentionally
+		// not expanded (MVP boundary from #114: include only affects env /
+		// note). When the folder has no pkv.include, the chain is just the
+		// folder itself and no [from:] annotations are added.
+		chain, err := client.LoadIncludeChain(session, folder)
+		if err != nil {
+			return fmt.Errorf("resolve include chain: %w", err)
+		}
+		chainNames := make([]string, len(chain))
+		for i, f := range chain {
+			chainNames[i] = f.Name
+		}
+
+		// Collect per-folder env bodies and config notes across the chain.
+		notesByFolder := make(map[string]string, len(chain))
+		itemsByFolder := make(map[string][]bwtypes.Item, len(chain))
+		for _, f := range chain {
+			var chainItems []bwtypes.Item
+			if f.ID == folderID {
+				// chain[0] is the current folder; reuse the items we already
+				// fetched to save a round trip.
+				chainItems = items
+			} else {
+				chainItems, err = client.ListItems(session, f.ID)
+				if err != nil {
+					return fmt.Errorf("list items for folder '%s': %w", f.Name, err)
+				}
+			}
+			itemsByFolder[f.Name] = bw.FilterConfigNotes(chainItems)
+			envNote, found, err := bw.FindManagedEnvNote(chainItems)
+			if err != nil {
+				return fmt.Errorf("folder '%s': %w", f.Name, err)
+			}
+			if found {
+				notesByFolder[f.Name] = envNote.Notes
+			}
+		}
+
+		fmt.Println("\nResolved view (env + note across pkv.include chain):")
+		if len(chain) > 1 {
+			fmt.Printf("  已展开 include：%s\n", strings.Join(chainNames, " -> "))
+		} else {
+			fmt.Println("  (no pkv.include on this folder; showing current folder only)")
+		}
+
+		// Env: merge and list each key with its winning source. Parse
+		// errors bubble up with the folder name from the merge package.
+		if len(notesByFolder) == 0 {
+			fmt.Println("\n  Env: none")
+		} else {
+			envResult, err := env.MergePkvEnvNotes(chainNames, notesByFolder)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("\n  Env (%d key(s)):\n", len(envResult.Vars))
+			for _, v := range envResult.Vars {
+				fmt.Printf("    [from: %s] %s\n", v.Source, v.Key)
+			}
+			if len(envResult.Conflicts) > 0 {
+				fmt.Println("\n  Env overrides:")
+				for _, c := range envResult.Conflicts {
+					fmt.Printf("    %s: winner=%s shadowed=%s\n",
+						c.Key, c.Winner, strings.Join(c.Losers, ","))
+				}
+			}
+		}
+
+		// Notes: merge and list each winning note with its source. Unlike
+		// env, notes include items only available via includes even when
+		// the current folder has no pkv.env.
+		merged := note.MergeNoteItems(chainNames, itemsByFolder)
+		fmt.Printf("\n  Notes (%d item(s)):\n", len(merged.Items))
+		for _, it := range merged.Items {
+			fmt.Printf("    [from: %s] %s\n", it.Source, it.Item.Name)
+		}
+		if len(merged.Conflicts) > 0 {
+			fmt.Println("\n  Note overrides:")
+			for _, c := range merged.Conflicts {
+				fmt.Printf("    %s: winner=%s shadowed=%s\n",
+					c.Name, c.Winner, strings.Join(c.Losers, ","))
+			}
+		}
+
+		// SSH stays folder-local. Call this out explicitly so the user
+		// understands the resolved view does not pull SSH keys across the
+		// chain.
+		fmt.Printf("\n  SSH: %d key(s) (not expanded through pkv.include; MVP)\n", len(sshKeys))
 		return nil
 	},
 }
@@ -1310,6 +1430,10 @@ var cleanNoteCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(listCmd, getCmd, addCmd, editCmd, removeCmd, cleanCmd)
+
+	// --resolved applies to `pkv list <folder>`; the flag has no effect on
+	// the bare `pkv list` (folders listing) and is silently ignored there.
+	listCmd.Flags().BoolVar(&listResolvedFlag, "resolved", false, "Expand pkv.include and show merged env/notes with their source folder")
 
 	addCmd.Flags().StringVar(&addSSHPrivFlag, "priv", "", "Private key file path (used with ssh)")
 	addCmd.Flags().StringVar(&addSSHPubFlag, "pub", "", "Public key, ssh-rsa AAAA... format (used with ssh)")
