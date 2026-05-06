@@ -118,8 +118,15 @@ func (c *Client) GetFolderID(session, name string) (string, error) {
 		return "", fmt.Errorf("failed to parse folders: %w", err)
 	}
 
+	// Prefer exact case-sensitive match.
 	for _, f := range folders {
 		if f.Name == name {
+			return f.ID, nil
+		}
+	}
+	// Fall back to case-insensitive match.
+	for _, f := range folders {
+		if strings.EqualFold(f.Name, name) {
 			return f.ID, nil
 		}
 	}
