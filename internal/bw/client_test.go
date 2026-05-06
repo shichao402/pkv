@@ -369,6 +369,71 @@ func TestEnsureUnlockedReturnsExportedSessionValidationError(t *testing.T) {
 	}
 }
 
+func TestGetFolderID(t *testing.T) {
+	tests := []struct {
+		name      string
+		scenario  string
+		query     string
+		wantID    string
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:     "exact case-sensitive match",
+			scenario: "folders_mixed_case",
+			query:    "Dev",
+			wantID:   "folder-dev-cap",
+		},
+		{
+			name:     "case-insensitive fallback when exact missing",
+			scenario: "folders_mixed_case",
+			query:    "PROD",
+			wantID:   "folder-prod-lower",
+		},
+		{
+			name:     "exact match preferred over case-insensitive sibling",
+			scenario: "folders_case_collision",
+			query:    "Dev",
+			wantID:   "folder-dev-cap",
+		},
+		{
+			name:      "not found returns error",
+			scenario:  "folders_mixed_case",
+			query:     "missing",
+			wantErr:   true,
+			errSubstr: "folder 'missing' not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("BW_SESSION", "test-session")
+			logPath := filepath.Join(t.TempDir(), "bw.log")
+
+			client := NewClient()
+			client.execCommand = newTestBWExecCommand(t, tt.scenario, logPath)
+			client.lookPath = func(string) (string, error) { return "/usr/local/bin/bw", nil }
+
+			id, err := client.GetFolderID("test-session", tt.query)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("GetFolderID(%q) expected error, got id=%q", tt.query, id)
+				}
+				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Fatalf("GetFolderID(%q) error = %v, want substring %q", tt.query, err, tt.errSubstr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("GetFolderID(%q) unexpected error: %v", tt.query, err)
+			}
+			if id != tt.wantID {
+				t.Fatalf("GetFolderID(%q) = %q, want %q", tt.query, id, tt.wantID)
+			}
+		})
+	}
+}
+
 func newTestBWExecCommand(t *testing.T, scenario, logPath string) execCommandFunc {
 	t.Helper()
 	return func(name string, args ...string) *exec.Cmd {
@@ -502,6 +567,18 @@ func TestClientHelperProcess(t *testing.T) {
 			os.Exit(0)
 		case strings.HasPrefix(joined, "--nointeraction --session ") && strings.HasSuffix(joined, " delete item item-1"):
 			_, _ = fmt.Fprint(os.Stdout, `{"success":true}`)
+			os.Exit(0)
+		}
+	case "folders_mixed_case":
+		// "Dev" exists exactly; "prod" exists only in lowercase.
+		if strings.HasPrefix(joined, "--nointeraction --session test-session list folders --search ") {
+			_, _ = fmt.Fprint(os.Stdout, `[{"id":"folder-dev-cap","name":"Dev"},{"id":"folder-prod-lower","name":"prod"}]`)
+			os.Exit(0)
+		}
+	case "folders_case_collision":
+		// Both "Dev" and "dev" exist; exact match must win regardless of order.
+		if strings.HasPrefix(joined, "--nointeraction --session test-session list folders --search ") {
+			_, _ = fmt.Fprint(os.Stdout, `[{"id":"folder-dev-lower","name":"dev"},{"id":"folder-dev-cap","name":"Dev"}]`)
 			os.Exit(0)
 		}
 	}
