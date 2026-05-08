@@ -312,3 +312,78 @@ func TestLoadIncludeChain_DiamondVisitsEachFolderOnce(t *testing.T) {
 		t.Errorf("ListItems(shared) = %d, want 1 (resolver must dedup)", v.listItemsCalls["s"])
 	}
 }
+
+// TestLoadIncludeChain_RootCaseInsensitive: vault stores "Dec" but the user
+// passes "dec". loadIncludeChain must fall back to a case-insensitive match
+// and report the chain using the vault canonical name.
+func TestLoadIncludeChain_RootCaseInsensitive(t *testing.T) {
+	v := newFakeVault()
+	v.addFolder("dec-id", "Dec")
+
+	got, err := loadIncludeChain("dec", v.listFolders, v.listItems)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if names := foldersToNames(got); !reflect.DeepEqual(names, []string{"Dec"}) {
+		t.Errorf("chain names = %v, want [Dec] (canonical from vault)", names)
+	}
+	if got[0].ID != "dec-id" {
+		t.Errorf("chain[0].ID = %q, want %q", got[0].ID, "dec-id")
+	}
+}
+
+// TestLoadIncludeChain_IncludeBodyCaseInsensitive: include body lists "DEC"
+// while vault has "dec". The walker must normalize each include line via
+// case-insensitive fallback and use vault canonical names in the chain.
+func TestLoadIncludeChain_IncludeBodyCaseInsensitive(t *testing.T) {
+	v := newFakeVault()
+	v.addFolder("app-id", "app")
+	v.addFolder("dec-id", "dec")
+	v.setIncludeNote("app-id", "DEC\n")
+
+	got, err := loadIncludeChain("app", v.listFolders, v.listItems)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if names := foldersToNames(got); !reflect.DeepEqual(names, []string{"app", "dec"}) {
+		t.Errorf("chain names = %v, want [app dec]", names)
+	}
+}
+
+// TestLoadIncludeChain_ExactPreferredOverCaseInsensitive: vault has both
+// "Dec" and "dec"; an exact-case query must win without triggering the
+// case-insensitive ambiguity path.
+func TestLoadIncludeChain_ExactPreferredOverCaseInsensitive(t *testing.T) {
+	v := newFakeVault()
+	v.addFolder("dec-cap-id", "Dec")
+	v.addFolder("dec-low-id", "dec")
+
+	got, err := loadIncludeChain("dec", v.listFolders, v.listItems)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got[0].ID != "dec-low-id" || got[0].Name != "dec" {
+		t.Errorf("chain[0] = %+v, want exact match on lowercase 'dec'", got[0])
+	}
+}
+
+// TestLoadIncludeChain_AmbiguousCaseInsensitive: input has no exact match
+// and case-insensitive lookup yields multiple candidates. Must abort with
+// an aggregated error naming both candidates.
+func TestLoadIncludeChain_AmbiguousCaseInsensitive(t *testing.T) {
+	v := newFakeVault()
+	v.addFolder("dec-cap-id", "Dec")
+	v.addFolder("dec-up-id", "DEC")
+
+	_, err := loadIncludeChain("dec", v.listFolders, v.listItems)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `ambiguous folder name "dec"`) {
+		t.Errorf("error = %q, want substring about ambiguous folder", msg)
+	}
+	if !strings.Contains(msg, "DEC") || !strings.Contains(msg, "Dec") {
+		t.Errorf("error = %q, should list both candidates DEC and Dec", msg)
+	}
+}

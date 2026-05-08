@@ -60,6 +60,10 @@ func loadIncludeChain(
 	// them instead of silently picking one.
 	idByName := make(map[string]string, len(folders))
 	dupNames := make(map[string]bool)
+	// canonByLower maps lowercase folder name -> all canonical (vault) names
+	// that share that case-insensitive form. Used as a fallback when an exact
+	// match is missing, mirroring Client.GetFolderID's two-pass behavior.
+	canonByLower := make(map[string][]string, len(folders))
 	for _, f := range folders {
 		name := f.Name
 		if _, seen := idByName[name]; seen {
@@ -67,48 +71,111 @@ func loadIncludeChain(
 			continue
 		}
 		idByName[name] = f.ID
+		lower := strings.ToLower(name)
+		canonByLower[lower] = append(canonByLower[lower], name)
 	}
 
 	// Collectors for aggregated pre-flight errors.
-	missing := make(map[string]bool)       // referenced folder not in vault
-	duplicate := make(map[string]bool)     // referenced folder has duplicate names
-	tooManyNotes := make(map[string]error) // folder -> FindIncludeNote error
+	missing := make(map[string]bool)        // referenced folder not in vault
+	duplicate := make(map[string]bool)      // referenced folder has duplicate names
+	tooManyNotes := make(map[string]error)  // folder -> FindIncludeNote error
+	ambiguousCI := make(map[string][]string) // user input -> candidate canonical names
+
+	// resolveName implements the two-pass lookup: exact match first, then
+	// case-insensitive fallback. Returns the canonical (vault) name and a
+	// status:
+	//   "exact"     - exact case-sensitive match
+	//   "ci"        - unique case-insensitive match (canonical may differ from input)
+	//   "missing"   - no match at all
+	//   "ambiguous" - multiple distinct canonical names share the lowercased form
+	resolveName := func(name string) (canonical string, status string, candidates []string) {
+		if _, ok := idByName[name]; ok {
+			return name, "exact", nil
+		}
+		cands := canonByLower[strings.ToLower(name)]
+		switch len(cands) {
+		case 0:
+			return name, "missing", nil
+		case 1:
+			return cands[0], "ci", nil
+		default:
+			return name, "ambiguous", append([]string(nil), cands...)
+		}
+	}
 
 	fetch := func(folder string) (string, bool, error) {
-		if dupNames[folder] {
-			duplicate[folder] = true
+		// Note: by the time fetch is called for a non-root folder the caller
+		// (this same fetch on an earlier hop) has already rewritten include
+		// body lines to canonical names, so `folder` should already match an
+		// idByName key. Running resolveName again is harmless and lets the
+		// root call go through the same code path.
+		canonical, status, cands := resolveName(folder)
+		switch status {
+		case "missing":
+			missing[folder] = true
+			return "", false, nil
+		case "ambiguous":
+			ambiguousCI[folder] = cands
+			return "", false, nil
+		}
+		if dupNames[canonical] {
+			duplicate[canonical] = true
 			// Treat as leaf: resolver should continue and surface other
 			// problems rather than abort at first sight.
 			return "", false, nil
 		}
-		id, ok := idByName[folder]
-		if !ok {
-			missing[folder] = true
-			return "", false, nil
-		}
+		id := idByName[canonical]
 		items, err := listItems(id)
 		if err != nil {
-			return "", false, fmt.Errorf("list items for folder %q: %w", folder, err)
+			return "", false, fmt.Errorf("list items for folder %q: %w", canonical, err)
 		}
 		note, ok, err := include.FindIncludeNote(items)
 		if err != nil {
 			// Multiple pkv.include notes in one folder is a user error; record
 			// and treat as leaf so we can aggregate.
-			tooManyNotes[folder] = err
+			tooManyNotes[canonical] = err
 			return "", false, nil
 		}
 		if !ok {
 			return "", false, nil
 		}
-		return note.Notes, true, nil
+		// Rewrite each declared include line to its canonical (vault) name so
+		// include.Resolve sees normalized names. Lines that don't resolve are
+		// kept verbatim so the next fetch hop will record them as missing /
+		// ambiguous via the same resolveName logic.
+		lines := include.ParseLines(note.Notes)
+		for i, line := range lines {
+			if canon, status, _ := resolveName(line); status == "exact" || status == "ci" {
+				lines[i] = canon
+			}
+		}
+		return strings.Join(lines, "\n"), true, nil
 	}
 
-	chain, resolveErr := include.Resolve(rootFolder, fetch)
+	// Normalize the root before handing it to Resolve so the chain's first
+	// element uses the vault canonical name.
+	rootCanonical, rootStatus, rootCands := resolveName(rootFolder)
+	switch rootStatus {
+	case "missing":
+		missing[rootFolder] = true
+	case "ambiguous":
+		ambiguousCI[rootFolder] = rootCands
+	}
+
+	chain, resolveErr := include.Resolve(rootCanonical, fetch)
 
 	// Aggregate every pre-flight problem found during the walk.
 	var issues []string
 	if names := sortedKeys(missing); len(names) > 0 {
 		issues = append(issues, fmt.Sprintf("missing folders: %s", strings.Join(names, ", ")))
+	}
+	if names := sortedMapKeys2(ambiguousCI); len(names) > 0 {
+		for _, name := range names {
+			issues = append(issues, fmt.Sprintf(
+				"ambiguous folder name %q matches multiple vault folders by case: %s (rename so cases are unique)",
+				name, strings.Join(ambiguousCI[name], ", "),
+			))
+		}
 	}
 	if names := sortedKeys(duplicate); len(names) > 0 {
 		issues = append(issues,
@@ -138,9 +205,9 @@ func loadIncludeChain(
 		)
 	}
 
-	// Map the chain's folder names back to full types.Folder structs. The
-	// root is guaranteed to be in the vault at this point (otherwise it
-	// would have been reported as missing above and we would have returned).
+	// Map the chain's folder names back to full types.Folder structs. Names
+	// in chain are already canonical because fetch rewrites include-body
+	// lines and the root was normalized above.
 	out := make([]types.Folder, 0, len(chain))
 	for _, name := range chain {
 		out = append(out, types.Folder{ID: idByName[name], Name: name})
@@ -161,6 +228,18 @@ func sortedKeys(m map[string]bool) []string {
 }
 
 func sortedMapKeys(m map[string]error) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedMapKeys2(m map[string][]string) []string {
 	if len(m) == 0 {
 		return nil
 	}
