@@ -54,7 +54,13 @@ func ScanAndAddKnownHosts(sshDir string, hosts []string) error {
 	}
 
 	if len(scannedKeys) == 0 {
-		return fmt.Errorf("ssh-keyscan failed for all hosts: %s", strings.Join(failedTargets, ", "))
+		// All targets unreachable from this client (common when hosts are
+		// internal IPs that only resolve from inside a VPC, or when the
+		// client is offline). known_hosts prefill is a nice-to-have: the
+		// SSH client will still prompt for fingerprint confirmation on
+		// first connect. Don't fail the whole `pkv get` for it.
+		fmt.Fprintf(os.Stderr, "  Note: ssh-keyscan unreachable for all hosts (%s); known_hosts left unchanged. SSH will confirm fingerprint on first connect.\n", strings.Join(failedTargets, ", "))
+		return nil
 	}
 	if len(failedTargets) > 0 {
 		fmt.Fprintf(os.Stderr, "  Warning: ssh-keyscan failed for %d host(s): %s\n", len(failedTargets), strings.Join(failedTargets, ", "))

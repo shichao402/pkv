@@ -32,9 +32,12 @@ var (
 	addSSHGenerateFlag bool
 	addSSHTypeFlag     string
 	addSSHBitsFlag     int
-	addSSHDeployFlag   bool
 	addSSHCommentFlag  string
 	addSSHHostsFlag    []string
+
+	// --authorize flag for `pkv get <folder> ssh`: append public keys to
+	// ~/.ssh/authorized_keys after deploying.
+	getSSHAuthorizeFlag bool
 
 	addNoteFileFlag string
 
@@ -283,6 +286,9 @@ var getCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(2),
 	RunE: func(_ *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
+		if getSSHAuthorizeFlag && kind != "ssh" && kind != "all" {
+			fmt.Fprintln(os.Stderr, "Warning: --authorize only applies to `ssh` (and `all`); ignoring")
+		}
 		switch kind {
 		case "ssh":
 			return getSSHCmd.RunE(getSSHCmd, []string{folder})
@@ -391,6 +397,7 @@ var getSSHCmd = &cobra.Command{
 		}
 
 		deployed := 0
+		authorized := 0
 		for _, keyItem := range sshKeys {
 			if entry, ok := existingByID[keyItem.ID]; ok && entry.KeyName != sanitizeSSHKeyName(keyItem.Name) {
 				if err := deployer.Remove(entry); err != nil {
@@ -405,6 +412,24 @@ var getSSHCmd = &cobra.Command{
 				continue
 			}
 			deployed++
+
+			if getSSHAuthorizeFlag {
+				if keyItem.SSHKey == nil || keyItem.SSHKey.PublicKey == "" {
+					fmt.Fprintf(os.Stderr, "  Warning: '%s' has no public key in Bitwarden; skipping authorize\n", keyItem.Name)
+					continue
+				}
+				added, path, err := ssh.AppendAuthorizedKey(keyItem.SSHKey.PublicKey)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "  Warning: authorize for '%s' failed (%s): %v\n", keyItem.Name, path, err)
+					continue
+				}
+				if added {
+					fmt.Printf("    Appended to %s\n", path)
+					authorized++
+				} else {
+					fmt.Printf("    Already present in %s, skipped\n", path)
+				}
+			}
 		}
 
 		allHosts := collectDeployedSSHHosts(st.SSHKeys)
@@ -429,6 +454,9 @@ var getSSHCmd = &cobra.Command{
 			return nil
 		}
 		fmt.Printf("Deployed %d SSH key(s).\n", deployed)
+		if getSSHAuthorizeFlag {
+			fmt.Printf("Authorized %d key(s) on this host.\n", authorized)
+		}
 		return nil
 	},
 }
@@ -1022,21 +1050,6 @@ var addSSHCmd = &cobra.Command{
 		output, err := key.CreateBWSSHKey(client, session, cfg.KeyName, folderID, notes, opensshKey, publicKey, fingerprint)
 		if err != nil {
 			return fmt.Errorf("create SSH key failed: %w", err)
-		}
-
-		if generated && addSSHDeployFlag {
-			fmt.Println("Deploying public key to ~/.ssh/authorized_keys...")
-			added, path, deployErr := ssh.AppendAuthorizedKey(publicKey)
-			if deployErr != nil {
-				// Don't roll back: the BW item is the source of truth and
-				// surviving it lets the user retry deploy or paste manually.
-				fmt.Fprintf(os.Stderr, "Warning: deploy to %s failed: %v\n", path, deployErr)
-				fmt.Fprintf(os.Stderr, "  Public key:\n  %s\n", publicKey)
-			} else if added {
-				fmt.Printf("  Appended to %s\n", path)
-			} else {
-				fmt.Printf("  Already present in %s, skipped\n", path)
-			}
 		}
 
 		st, err := state.Load()
@@ -1743,9 +1756,12 @@ func init() {
 	addCmd.Flags().BoolVar(&addSSHGenerateFlag, "generate", false, "Generate a new SSH keypair in memory (alternative to --priv)")
 	addCmd.Flags().StringVar(&addSSHTypeFlag, "type", "ed25519", "Key algorithm when --generate: ed25519|rsa")
 	addCmd.Flags().IntVar(&addSSHBitsFlag, "bits", 4096, "RSA key size in bits (used with --generate --type rsa)")
-	addCmd.Flags().BoolVar(&addSSHDeployFlag, "deploy", false, "After upload, append the public key to ~/.ssh/authorized_keys on this host")
 	addCmd.Flags().StringVar(&addSSHCommentFlag, "comment", "", "Public key comment (default: <user>@<hostname> (pkv))")
 	addCmd.Flags().StringSliceVar(&addSSHHostsFlag, "host", nil, "Target host(s) for ssh config (repeatable; defaults to local hostname when --generate)")
+
+	// `pkv get <folder> ssh --authorize`: append every pulled public key to
+	// the current host's ~/.ssh/authorized_keys (the ssh-copy-id role).
+	getCmd.Flags().BoolVar(&getSSHAuthorizeFlag, "authorize", false, "After deploy, append each public key to ~/.ssh/authorized_keys on this host")
 }
 
 func readNoteContent(fileFlag, openEditorMessage string) (string, error) {
