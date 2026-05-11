@@ -4,14 +4,17 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -63,8 +66,21 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("checksum fetch failed: %w", err)
 	}
 
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate current binary: %w", err)
+	}
+
+	// Resolve symlinks so the temp file lands on the same filesystem as the
+	// real binary, not the symlink's parent directory.
+	resolvedPath, err := filepath.EvalSymlinks(execPath)
+	if err != nil {
+		resolvedPath = execPath
+	}
+	targetDir := filepath.Dir(resolvedPath)
+
 	fmt.Printf("Downloading %s...\n", assetName)
-	tmpFile, err := downloadAsset(downloadURL)
+	tmpFile, err := downloadAsset(downloadURL, targetDir)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -77,18 +93,13 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Println("Checksum verified.")
 
-	execPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locate current binary: %w", err)
-	}
-
 	// Replace current binary
-	if err := replaceBinary(execPath, tmpFile); err != nil {
+	if err := replaceBinary(resolvedPath, tmpFile); err != nil {
 		return fmt.Errorf("replace binary: %w", err)
 	}
 
 	// Remove macOS quarantine attribute
-	removeQuarantineAttr(execPath)
+	removeQuarantineAttr(resolvedPath)
 
 	fmt.Printf("Updated to %s successfully.\n", latestTag)
 	return nil
@@ -135,7 +146,7 @@ func buildAssetName() string {
 	return name
 }
 
-func downloadAsset(url string) (string, error) {
+func downloadAsset(url, targetDir string) (string, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
@@ -146,9 +157,15 @@ func downloadAsset(url string) (string, error) {
 		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 
-	tmpFile, err := os.CreateTemp("", "pkv-update-*")
+	// Create the temp file in the same directory as the target binary so the
+	// final os.Rename is an in-filesystem (atomic) operation. Falls back to
+	// the system default temp dir if the target dir isn't writable.
+	tmpFile, err := os.CreateTemp(targetDir, ".pkv-update-*")
 	if err != nil {
-		return "", err
+		tmpFile, err = os.CreateTemp("", "pkv-update-*")
+		if err != nil {
+			return "", err
+		}
 	}
 
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
@@ -234,6 +251,16 @@ func replaceBinary(targetPath, newBinaryPath string) error {
 
 	// Move new binary into place
 	if err := os.Rename(newBinaryPath, targetPath); err != nil {
+		// Cross-device link: fall back to copy + atomic rename within target dir
+		if isCrossDeviceErr(err) {
+			if cpErr := copyAndReplace(newBinaryPath, targetPath); cpErr == nil {
+				_ = os.Remove(newBinaryPath)
+				if rmErr := os.Remove(backupPath); rmErr != nil && !os.IsNotExist(rmErr) {
+					fmt.Fprintf(os.Stderr, "Warning: failed to remove backup file %s: %v\n", backupPath, rmErr)
+				}
+				return nil
+			}
+		}
 		// Rollback: restore backup
 		if rbErr := os.Rename(backupPath, targetPath); rbErr != nil {
 			return fmt.Errorf("install new binary: %w (rollback also failed: %v; backup at %s)", err, rbErr, backupPath)
@@ -244,6 +271,47 @@ func replaceBinary(targetPath, newBinaryPath string) error {
 	// Remove backup (non-critical, warn on failure)
 	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove backup file %s: %v\n", backupPath, err)
+	}
+	return nil
+}
+
+// isCrossDeviceErr reports whether err is an EXDEV (cross-device link) error,
+// which happens when os.Rename crosses filesystem boundaries (e.g. /tmp on a
+// separate mount from the install dir).
+func isCrossDeviceErr(err error) bool {
+	return errors.Is(err, syscall.EXDEV)
+}
+
+// copyAndReplace copies src into a sibling temp file of dst, then atomically
+// renames it into place. Both paths must live on the same filesystem.
+func copyAndReplace(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	stagingPath := dst + ".new"
+	out, err := os.OpenFile(stagingPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(stagingPath)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(stagingPath)
+		return err
+	}
+	if err := os.Chmod(stagingPath, 0o755); err != nil {
+		_ = os.Remove(stagingPath)
+		return err
+	}
+	if err := os.Rename(stagingPath, dst); err != nil {
+		_ = os.Remove(stagingPath)
+		return err
 	}
 	return nil
 }
