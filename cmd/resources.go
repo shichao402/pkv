@@ -3,8 +3,10 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -685,8 +687,16 @@ var addCmd = &cobra.Command{
 	},
 }
 
-// defaultKeyComment returns "<user>@<hostname> (pkv)" for use as the public
-// key comment when --generate is invoked without --comment.
+// defaultKeyComment returns "<user>@<hostname>[ <ip>] (pkv)" for use as the
+// public key comment when --generate is invoked without --comment. The IPv4
+// segment is best-effort: a public IPv4 bound to a local interface is
+// preferred, falling back to a private (RFC1918) IPv4. When no usable IPv4
+// is found (offline machine, only IPv6, etc.) the IP segment is omitted.
+//
+// The IP only serves as provenance metadata baked into the OpenSSH public key
+// comment — SSH clients never parse it, so adding it here does not affect the
+// ssh-config generation that runs from the resource's separate host/port
+// fields during `pkv get`.
 func defaultKeyComment() string {
 	u := os.Getenv("USER")
 	if u == "" {
@@ -696,13 +706,189 @@ func defaultKeyComment() string {
 	if h == "" {
 		h = "host"
 	}
+	if ip := localIPv4(); ip != "" {
+		return fmt.Sprintf("%s@%s [%s] (pkv)", u, h, ip)
+	}
 	return fmt.Sprintf("%s@%s (pkv)", u, h)
 }
 
+// localIPv4 returns the best local IPv4 address for identifying the machine
+// that generated a key. It walks net.Interfaces, ignores down / loopback /
+// link-local addresses, and prefers a public address over an RFC1918 one.
+// When multiple candidates qualify, the result is deterministic: candidates
+// are sorted by (interface name, IP) ascending, so the same machine state
+// always picks the same address.
+// Returns "" when nothing usable is found.
+func localIPv4() string {
+	return selectIPv4(localIPv4Candidates())
+}
+
+// ipv4Candidate is a (interface name, IPv4) pair used by localIPv4.
+type ipv4Candidate struct {
+	iface string
+	ip    net.IP // already To4()'d, 4-byte form
+}
+
+// localIPv4Candidates collects all routable IPv4 addresses bound to local
+// interfaces. Loopback / down interfaces, virtual / container / VPN
+// interfaces (docker, veth, tailscale, utun, wg, ...) and loopback /
+// link-local / unspecified addresses are filtered out. Order is whatever
+// net.Interfaces returns; selectIPv4 imposes deterministic ordering.
+func localIPv4Candidates() []ipv4Candidate {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []ipv4Candidate
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isVirtualIface(ifi.Name) {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			if ip4.IsLoopback() || ip4.IsLinkLocalUnicast() || ip4.IsUnspecified() {
+				continue
+			}
+			out = append(out, ipv4Candidate{iface: ifi.Name, ip: ip4})
+		}
+	}
+	return out
+}
+
+// virtualIfacePrefixes lists interface name prefixes that indicate a
+// virtual / container / VPN interface whose IP should not be treated as the
+// machine's identity.
+//
+// Conservative on purpose: we'd rather skip a virtual interface than mis-
+// classify a real one. Real Linux interfaces like "eth0" / "ens3" / "enp0s3"
+// and macOS "en0" are intentionally NOT in this list.
+var virtualIfacePrefixes = []string{
+	"docker",    // docker0, docker_gwbridge
+	"br-",       // docker user-defined bridges
+	"veth",      // container virtual ethernet pair
+	"virbr",     // libvirt bridge
+	"vnet",      // libvirt/qemu tap
+	"vmnet",     // VMware
+	"vboxnet",   // VirtualBox
+	"tailscale", // Tailscale (Linux)
+	"tun",       // OpenVPN / generic tun (tun0, tunl0, ...)
+	"tap",       // generic tap
+	"utun",      // macOS VPN / Tailscale
+	"wg",        // WireGuard
+	"zt",        // ZeroTier
+	"cni",       // k8s CNI
+	"flannel",   // k8s flannel
+	"cali",      // k8s calico
+	"weave",     // k8s weave
+	"ppp",       // PPP / dial-up
+	"awdl",      // macOS Apple Wireless Direct Link
+	"llw",       // macOS low-latency WLAN
+	"gif",       // macOS generic tunnel interface
+	"stf",       // macOS 6to4 tunnel
+}
+
+// virtualIfaceExactNames lists exact interface names to skip. Used when a
+// short prefix would risk false positives on real interfaces.
+var virtualIfaceExactNames = map[string]struct{}{
+	"ap1":     {}, // macOS AirPlay-related virtual interface
+	"bridge0": {}, // macOS default bridge
+	"bridge1": {}, // macOS default bridge
+	"anpi0":   {}, // macOS internal
+	"anpi1":   {}, // macOS internal
+}
+
+// isVirtualIface reports whether the interface name looks like a virtual /
+// container / VPN interface that should not contribute to the machine's
+// public identity. Matching is case-insensitive: by prefix against
+// virtualIfacePrefixes, then by exact name against virtualIfaceExactNames.
+func isVirtualIface(name string) bool {
+	lower := strings.ToLower(name)
+	for _, p := range virtualIfacePrefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	if _, ok := virtualIfaceExactNames[lower]; ok {
+		return true
+	}
+	return false
+}
+
+// selectIPv4 picks the best IPv4 from the given candidates. Candidates are
+// first sorted by (interface name, IP bytes) so the result is stable across
+// runs on the same machine. Then a non-private address wins over a private
+// one; within the same class, the sort order decides ties. Returns "" when
+// no candidate qualifies.
+func selectIPv4(candidates []ipv4Candidate) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	sorted := make([]ipv4Candidate, len(candidates))
+	copy(sorted, candidates)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].iface != sorted[j].iface {
+			return sorted[i].iface < sorted[j].iface
+		}
+		// IPv4 byte-wise compare is equivalent to numeric compare here.
+		return string(sorted[i].ip) < string(sorted[j].ip)
+	})
+	var firstPrivate string
+	for _, c := range sorted {
+		if !isPrivateIPv4(c.ip) {
+			return c.ip.String()
+		}
+		if firstPrivate == "" {
+			firstPrivate = c.ip.String()
+		}
+	}
+	return firstPrivate
+}
+
+// isPrivateIPv4 reports whether ip is in an RFC1918 private range
+// (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) or the CGNAT range
+// (100.64.0.0/10, RFC6598). ip must already be a 4-byte IPv4.
+func isPrivateIPv4(ip net.IP) bool {
+	if len(ip) != 4 {
+		return false
+	}
+	switch {
+	case ip[0] == 10:
+		return true
+	case ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31:
+		return true
+	case ip[0] == 192 && ip[1] == 168:
+		return true
+	case ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127:
+		return true
+	}
+	return false
+}
+
 // resolveHosts returns the user-supplied --host values (trimmed, empties
-// dropped). When the flag is empty, it falls back to the local hostname so
-// that clients can still get a single ssh-config alias. Returns nil when
-// neither is available.
+// dropped). When the flag is empty, it falls back to a routable address for
+// the current machine so that clients can still get a single ssh-config
+// alias. The fallback prefers a local IPv4 (public > RFC1918) over the
+// machine hostname, because hostnames like "VM-34-79-tencentos" are usually
+// not resolvable off the host and would break ssh-keyscan / ssh on the
+// client side. Hostname is only used as a last-resort fallback. Returns nil
+// when nothing is available.
 func resolveHosts(flagHosts []string) []string {
 	out := make([]string, 0, len(flagHosts))
 	for _, h := range flagHosts {
@@ -712,6 +898,9 @@ func resolveHosts(flagHosts []string) []string {
 	}
 	if len(out) > 0 {
 		return out
+	}
+	if ip := localIPv4(); ip != "" {
+		return []string{ip}
 	}
 	if h, err := os.Hostname(); err == nil && h != "" {
 		return []string{h}
@@ -764,7 +953,9 @@ var addSSHCmd = &cobra.Command{
 
 			hosts = resolveHosts(addSSHHostsFlag)
 			if len(hosts) == 0 {
-				fmt.Fprintln(os.Stderr, "Warning: no --host provided and local hostname unavailable; SSH config alias will not be generated on clients")
+				fmt.Fprintln(os.Stderr, "Warning: no --host provided and no local IPv4/hostname available; SSH config alias will not be generated on clients")
+			} else if len(addSSHHostsFlag) == 0 {
+				fmt.Fprintf(os.Stderr, "Note: no --host provided; using auto-detected host %q (override with --host to be safe)\n", hosts[0])
 			}
 		} else {
 			if len(addSSHHostsFlag) > 0 {
