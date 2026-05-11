@@ -209,6 +209,42 @@ pkv get prod note
 - `app.secrets.json` -> `~/workspace/my-app/app.secrets.json`
 - `.env.local` -> `~/workspace/my-app/.env.local`
 
+### 6. 在新服务器上就地生成 SSH Key
+
+新开一台机器、想直接用 SSH key 免密登录，但又不想在本地生成完再 `scp` 上去？在服务器上手动登录后执行：
+
+```bash
+pkv add prod ssh --generate --name web01-prod --host web01.example.com --deploy
+```
+
+发生了什么：
+
+- 在内存里生成一对 ed25519 keypair（默认；`--type rsa --bits 4096` 可选）
+- 私钥以 OpenSSH 格式写进 Bitwarden 的 SSH Key Item，**完全不落本地磁盘**
+- `--host` 写入条目的 `Notes`（一行一个），客户端 pull 后自动生成 ssh-config 别名；不传 `--host` 时回退到本机 hostname
+- `--deploy` 把公钥追加到当前机器的 `~/.ssh/authorized_keys`，去重，自动修正 `~/.ssh` 700 / `authorized_keys` 600
+
+回到客户端：
+
+```bash
+pkv get prod ssh
+ssh web01.example.com   # 免密成功
+```
+
+常用 flag：
+
+- `--type ed25519|rsa`：算法，默认 `ed25519`
+- `--bits N`：仅 RSA 使用，必须 ≥ 2048，默认 4096
+- `--comment STR`：公钥注释，默认 `<user>@<hostname> (pkv)`
+- `--host H`：可重复（`--host a --host b`）或逗号分隔（`--host a,b`）
+- `--deploy`：追加公钥到本机 `~/.ssh/authorized_keys`
+
+注意：
+
+- `--generate` 与 `--priv` / `--pub` 互斥
+- `--deploy` 失败不会回滚 Bitwarden（远端是权威拷贝）；命令会把公钥打到 stderr，可手动追加
+- 私钥仅经过 BW，本地任何时候都没有副本，丢失主密码即丢失这把 key
+
 ## 交互模式
 
 直接运行：
@@ -280,6 +316,7 @@ pkv get <folder> all
 
 ```bash
 pkv add <folder> ssh --priv ~/.ssh/id_ed25519 --name github-prod
+pkv add <folder> ssh --generate --name web01-prod --host web01.example.com --deploy
 pkv add <folder> env --file .env.prod
 pkv add <folder> note --name app.secrets.json --file ./app.secrets.json
 ```
@@ -287,6 +324,8 @@ pkv add <folder> note --name app.secrets.json --file ./app.secrets.json
 说明：
 
 - `add ssh`：向 Bitwarden 新建 SSH Key Item
+  - `--priv` 模式：从本地已有私钥导入
+  - `--generate` 模式：在内存里现场生成 keypair，私钥直接写进 Bitwarden（**不落本地**），可选 `--deploy` 把公钥追加到本机 `~/.ssh/authorized_keys`；典型用法见下文「在新服务器上就地生成 SSH Key」
 - `add env`：创建或覆盖这个 folder 的 `pkv.env`
 - `add note`：创建一个普通配置 note
 - `add env` / `add note` 如果不传 `--file`，会打开 `$EDITOR`

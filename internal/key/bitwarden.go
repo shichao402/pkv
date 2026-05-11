@@ -27,7 +27,9 @@ type BWItem struct {
 // CreateBWSSHKey creates an SSH Key item in Bitwarden vault.
 // session is optional; if empty, it will be read from BW_SESSION environment variable.
 // folderID is optional; if provided, the item will be placed in that folder.
-func CreateBWSSHKey(client *bw.Client, session, name, folderID, privateKey, publicKey, fingerprint string) (string, error) {
+// notes is optional; if non-empty it is stored verbatim in the item's notes
+// field (used to carry the host list, one per line, that pkv get consumes).
+func CreateBWSSHKey(client *bw.Client, session, name, folderID, notes, privateKey, publicKey, fingerprint string) (string, error) {
 	if client == nil {
 		client = bw.NewClient()
 	}
@@ -36,6 +38,7 @@ func CreateBWSSHKey(client *bw.Client, session, name, folderID, privateKey, publ
 		Type:     5, // SSH Key item type
 		Name:     name,
 		FolderID: folderID,
+		Notes:    notes,
 		SSHKey: &BWSSHKey{
 			PrivateKey:     strings.TrimSpace(privateKey),
 			PublicKey:      strings.TrimSpace(publicKey),

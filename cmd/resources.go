@@ -26,6 +26,14 @@ var (
 	addSSHPubFlag  string
 	addNameFlag    string
 
+	// --generate path flags (server-side keypair generation).
+	addSSHGenerateFlag bool
+	addSSHTypeFlag     string
+	addSSHBitsFlag     int
+	addSSHDeployFlag   bool
+	addSSHCommentFlag  string
+	addSSHHostsFlag    []string
+
 	addNoteFileFlag string
 
 	// listResolvedFlag expands pkv.include when listing a single folder.
@@ -677,6 +685,40 @@ var addCmd = &cobra.Command{
 	},
 }
 
+// defaultKeyComment returns "<user>@<hostname> (pkv)" for use as the public
+// key comment when --generate is invoked without --comment.
+func defaultKeyComment() string {
+	u := os.Getenv("USER")
+	if u == "" {
+		u = "user"
+	}
+	h, _ := os.Hostname()
+	if h == "" {
+		h = "host"
+	}
+	return fmt.Sprintf("%s@%s (pkv)", u, h)
+}
+
+// resolveHosts returns the user-supplied --host values (trimmed, empties
+// dropped). When the flag is empty, it falls back to the local hostname so
+// that clients can still get a single ssh-config alias. Returns nil when
+// neither is available.
+func resolveHosts(flagHosts []string) []string {
+	out := make([]string, 0, len(flagHosts))
+	for _, h := range flagHosts {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return []string{h}
+	}
+	return nil
+}
+
 var addSSHCmd = &cobra.Command{
 	Use:   "ssh <folder>",
 	Short: "Add an SSH key to a folder",
@@ -690,27 +732,67 @@ var addSSHCmd = &cobra.Command{
 			Folder:      folder,
 		}
 
-		expandedPath, err := pathutil.ExpandTilde(cfg.PrivatePath)
-		if err != nil {
-			return fmt.Errorf("resolve home directory: %w", err)
-		}
-		cfg.PrivatePath = expandedPath
+		var (
+			opensshKey  string
+			publicKey   string
+			fingerprint string
+			hosts       []string
+			generated   bool
+		)
 
-		fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
-		if err := key.InteractiveInput(cfg); err != nil {
-			return fmt.Errorf("input failed: %w", err)
-		}
+		if addSSHGenerateFlag {
+			generated = true
+			if addSSHPrivFlag != "" || addSSHPubFlag != "" {
+				return fmt.Errorf("--generate cannot be combined with --priv/--pub")
+			}
+			if cfg.KeyName == "" {
+				return fmt.Errorf("--name is required with --generate")
+			}
 
-		fmt.Printf("\nReading private key: %s\n", cfg.PrivatePath)
-		privateKeyBytes, err := os.ReadFile(cfg.PrivatePath)
-		if err != nil {
-			return fmt.Errorf("read private key failed: %w", err)
-		}
+			comment := addSSHCommentFlag
+			if comment == "" {
+				comment = defaultKeyComment()
+			}
 
-		fmt.Println("Parsing and converting key...")
-		opensshKey, publicKey, fingerprint, err := key.ParseAndConvertKey(privateKeyBytes)
-		if err != nil {
-			return fmt.Errorf("parse key failed: %w", err)
+			fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
+			fmt.Printf("Generating %s keypair in memory...\n", addSSHTypeFlag)
+			var err error
+			opensshKey, publicKey, fingerprint, err = key.GenerateKeypair(addSSHTypeFlag, addSSHBitsFlag, comment)
+			if err != nil {
+				return fmt.Errorf("generate keypair: %w", err)
+			}
+
+			hosts = resolveHosts(addSSHHostsFlag)
+			if len(hosts) == 0 {
+				fmt.Fprintln(os.Stderr, "Warning: no --host provided and local hostname unavailable; SSH config alias will not be generated on clients")
+			}
+		} else {
+			if len(addSSHHostsFlag) > 0 {
+				fmt.Fprintln(os.Stderr, "Warning: --host is only honored with --generate; ignoring (edit the item's notes in Bitwarden to set hosts)")
+			}
+
+			expandedPath, err := pathutil.ExpandTilde(cfg.PrivatePath)
+			if err != nil {
+				return fmt.Errorf("resolve home directory: %w", err)
+			}
+			cfg.PrivatePath = expandedPath
+
+			fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
+			if err := key.InteractiveInput(cfg); err != nil {
+				return fmt.Errorf("input failed: %w", err)
+			}
+
+			fmt.Printf("\nReading private key: %s\n", cfg.PrivatePath)
+			privateKeyBytes, err := os.ReadFile(cfg.PrivatePath)
+			if err != nil {
+				return fmt.Errorf("read private key failed: %w", err)
+			}
+
+			fmt.Println("Parsing and converting key...")
+			opensshKey, publicKey, fingerprint, err = key.ParseAndConvertKey(privateKeyBytes)
+			if err != nil {
+				return fmt.Errorf("parse key failed: %w", err)
+			}
 		}
 
 		client := bw.NewClient()
@@ -731,19 +813,39 @@ var addSSHCmd = &cobra.Command{
 			return fmt.Errorf("folder lookup failed: %w", err)
 		}
 
-		confirm, err := key.ConfirmAndCreate(cfg, fingerprint)
-		if err != nil {
-			return fmt.Errorf("confirmation failed: %w", err)
-		}
-		if !confirm {
-			fmt.Println("Canceled.")
-			return nil
+		// --generate is non-interactive; only the file-based path goes through ConfirmAndCreate.
+		if !generated {
+			confirm, err := key.ConfirmAndCreate(cfg, fingerprint)
+			if err != nil {
+				return fmt.Errorf("confirmation failed: %w", err)
+			}
+			if !confirm {
+				fmt.Println("Canceled.")
+				return nil
+			}
 		}
 
+		notes := strings.Join(hosts, "\n")
+
 		fmt.Println("Creating SSH key in Bitwarden...")
-		output, err := key.CreateBWSSHKey(client, session, cfg.KeyName, folderID, opensshKey, publicKey, fingerprint)
+		output, err := key.CreateBWSSHKey(client, session, cfg.KeyName, folderID, notes, opensshKey, publicKey, fingerprint)
 		if err != nil {
 			return fmt.Errorf("create SSH key failed: %w", err)
+		}
+
+		if generated && addSSHDeployFlag {
+			fmt.Println("Deploying public key to ~/.ssh/authorized_keys...")
+			added, path, deployErr := ssh.AppendAuthorizedKey(publicKey)
+			if deployErr != nil {
+				// Don't roll back: the BW item is the source of truth and
+				// surviving it lets the user retry deploy or paste manually.
+				fmt.Fprintf(os.Stderr, "Warning: deploy to %s failed: %v\n", path, deployErr)
+				fmt.Fprintf(os.Stderr, "  Public key:\n  %s\n", publicKey)
+			} else if added {
+				fmt.Printf("  Appended to %s\n", path)
+			} else {
+				fmt.Printf("  Already present in %s, skipped\n", path)
+			}
 		}
 
 		st, err := state.Load()
@@ -757,6 +859,12 @@ var addSSHCmd = &cobra.Command{
 
 		fmt.Printf("\nSSH key '%s' added to folder '%s'\n", cfg.KeyName, folder)
 		fmt.Printf("  Fingerprint: %s\n", fingerprint)
+		if generated {
+			if len(hosts) > 0 {
+				fmt.Printf("  Hosts: %s\n", strings.Join(hosts, ", "))
+			}
+			fmt.Printf("  Public key: %s\n", publicKey)
+		}
 		return nil
 	},
 }
@@ -1439,6 +1547,14 @@ func init() {
 	addCmd.Flags().StringVar(&addSSHPubFlag, "pub", "", "Public key, ssh-rsa AAAA... format (used with ssh)")
 	addCmd.Flags().StringVar(&addNameFlag, "name", "", "Item name in Bitwarden (used with ssh/note)")
 	addCmd.Flags().StringVar(&addNoteFileFlag, "file", "", "File path to read content from (used with env/note)")
+
+	// Server-side keypair generation flags (only relevant for `pkv add <folder> ssh`).
+	addCmd.Flags().BoolVar(&addSSHGenerateFlag, "generate", false, "Generate a new SSH keypair in memory (alternative to --priv)")
+	addCmd.Flags().StringVar(&addSSHTypeFlag, "type", "ed25519", "Key algorithm when --generate: ed25519|rsa")
+	addCmd.Flags().IntVar(&addSSHBitsFlag, "bits", 4096, "RSA key size in bits (used with --generate --type rsa)")
+	addCmd.Flags().BoolVar(&addSSHDeployFlag, "deploy", false, "After upload, append the public key to ~/.ssh/authorized_keys on this host")
+	addCmd.Flags().StringVar(&addSSHCommentFlag, "comment", "", "Public key comment (default: <user>@<hostname> (pkv))")
+	addCmd.Flags().StringSliceVar(&addSSHHostsFlag, "host", nil, "Target host(s) for ssh config (repeatable; defaults to local hostname when --generate)")
 }
 
 func readNoteContent(fileFlag, openEditorMessage string) (string, error) {
