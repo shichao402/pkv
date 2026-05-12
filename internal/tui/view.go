@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -47,6 +48,14 @@ func renderBreadcrumb(m Model) string {
 	if m.focus == focusDetail {
 		parts = append(parts, tabName(m.tab), "Detail")
 	}
+	switch m.interaction {
+	case interactionConfirm:
+		parts = append(parts, "Confirm")
+	case interactionEdit:
+		parts = append(parts, "Edit")
+	case interactionSSHWizard:
+		parts = append(parts, "Add SSH")
+	}
 	return titleStyle.Render(strings.Join(parts, " › "))
 }
 
@@ -83,6 +92,14 @@ func renderFolderList(m Model) string {
 }
 
 func renderResources(m Model) string {
+	switch m.interaction {
+	case interactionConfirm:
+		return renderConfirm(m)
+	case interactionEdit:
+		return renderEdit(m)
+	case interactionSSHWizard:
+		return renderSSHWizard(m)
+	}
 	if m.focus == focusDetail {
 		return renderDetail(m)
 	}
@@ -113,6 +130,8 @@ func renderResources(m Model) string {
 	items := m.currentItems()
 	if len(items) == 0 {
 		b.WriteString(subtleStyle.Render(fmt.Sprintf("No %s items.", strings.ToLower(tabName(m.tab)))))
+		b.WriteString("\n\n")
+		b.WriteString(renderResourceHints(m))
 		return b.String()
 	}
 
@@ -129,7 +148,7 @@ func renderResources(m Model) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(subtleStyle.Render("enter detail · tab switch · esc folders"))
+	b.WriteString(renderResourceHints(m))
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -184,7 +203,94 @@ func renderDetail(m Model) string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(subtleStyle.Render("esc back · q quit"))
+	b.WriteString(renderDetailHints(m))
+	return b.String()
+}
+
+func renderConfirm(m Model) string {
+	var b strings.Builder
+	kind := tabKind(m.confirm.tab)
+	title := "Confirm"
+	verb := "clean local materialized resources for"
+	target := kind
+	if m.confirm.kind == confirmRemove {
+		verb = "remove"
+		target = m.confirm.item.Name
+		if target == "" {
+			target = shortID(m.confirm.item.ID)
+		}
+		title = "Confirm Remove"
+	} else {
+		title = "Confirm Clean"
+	}
+	b.WriteString(focusedStyle.Render(title))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Folder: %s\n", m.folderName()))
+	b.WriteString(fmt.Sprintf("Action: %s %s\n", verb, target))
+	if m.confirm.kind == confirmRemove && m.confirm.item.ID != "" {
+		b.WriteString(fmt.Sprintf("ID:     %s\n", m.confirm.item.ID))
+	}
+	b.WriteString("\n")
+	b.WriteString(errorStyle.Render("This action changes Bitwarden or local materialized files."))
+	b.WriteString("\n\n")
+	b.WriteString(subtleStyle.Render("y confirm · n/esc cancel"))
+	return b.String()
+}
+
+func renderEdit(m Model) string {
+	var b strings.Builder
+	b.WriteString(focusedStyle.Render(fmt.Sprintf("Edit %s", tabName(m.edit.tab))))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Folder: %s\n", m.folderName()))
+	b.WriteString(fmt.Sprintf("Item:   %s\n", m.edit.item.Name))
+	if m.edit.item.ID != "" {
+		b.WriteString(fmt.Sprintf("ID:     %s\n", m.edit.item.ID))
+	}
+	b.WriteString("\n")
+	b.WriteString(m.edit.content.View())
+	b.WriteString("\n\n")
+	b.WriteString(subtleStyle.Render("ctrl+s save · esc cancel"))
+	return b.String()
+}
+
+func renderSSHWizard(m Model) string {
+	var b strings.Builder
+	b.WriteString(focusedStyle.Render("Add SSH Key"))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("Folder: %s\n\n", m.folderName()))
+	if m.sshWizard.err != "" {
+		b.WriteString(errorStyle.Render(m.sshWizard.err))
+		b.WriteString("\n\n")
+	}
+	switch m.sshWizard.step {
+	case sshStepPrivatePath:
+		b.WriteString("Private key path\n")
+		b.WriteString(m.sshWizard.privateInput.View())
+		b.WriteString("\n\n")
+		b.WriteString(subtleStyle.Render("enter next · esc cancel"))
+	case sshStepPublicKey:
+		b.WriteString("Public key (leave empty to use derived key)\n")
+		b.WriteString(m.sshWizard.publicInput.View())
+		b.WriteString("\n\n")
+		b.WriteString(subtleStyle.Render(fmt.Sprintf("Derived fingerprint: %s\nenter next · esc cancel", m.sshWizard.fingerprint)))
+	case sshStepKeyName:
+		b.WriteString("Key name\n")
+		b.WriteString(m.sshWizard.nameInput.View())
+		b.WriteString("\n\n")
+		b.WriteString(subtleStyle.Render("enter summary · esc cancel"))
+	case sshStepConfirm:
+		publicKey := strings.TrimSpace(m.sshWizard.publicInput.Value())
+		if publicKey == "" {
+			publicKey = m.sshWizard.derivedPub
+		}
+		b.WriteString("Summary\n\n")
+		b.WriteString(fmt.Sprintf("Key name:    %s\n", strings.TrimSpace(m.sshWizard.nameInput.Value())))
+		b.WriteString(fmt.Sprintf("Private key: %s\n", displayPath(m.sshWizard.privateInput.Value())))
+		b.WriteString(fmt.Sprintf("Fingerprint: %s\n", m.sshWizard.fingerprint))
+		b.WriteString(fmt.Sprintf("Public key:  %s\n", truncate(publicKey, 72)))
+		b.WriteString("\n")
+		b.WriteString(subtleStyle.Render("y/ctrl+s create · n/esc cancel"))
+	}
 	return b.String()
 }
 
@@ -198,7 +304,30 @@ func renderFooter(m Model) string {
 	} else if m.loading {
 		status = subtleStyle.Render(status)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, "", status, subtleStyle.Render("↑↓ navigate · enter select · tab/←→ switch · r reload · q quit"))
+	return lipgloss.JoinVertical(lipgloss.Left, "", status, subtleStyle.Render("↑↓ navigate · enter select · tab/←→ switch · a add · e edit · d remove · c clean · u unlock · r reload · q quit"))
+}
+
+func renderResourceHints(m Model) string {
+	if m.tab == tabSSH {
+		return subtleStyle.Render("enter detail · a add ssh · d remove · c clean · tab switch · esc folders")
+	}
+	if m.tab == tabEnv {
+		return subtleStyle.Render("enter detail · e edit/create env · d remove · c clean · tab switch · esc folders")
+	}
+	return subtleStyle.Render("enter detail · e edit note · d remove · c clean · tab switch · esc folders")
+}
+
+func renderDetailHints(m Model) string {
+	switch m.tab {
+	case tabSSH:
+		return subtleStyle.Render("d remove · c clean · esc back · q quit")
+	case tabEnv:
+		return subtleStyle.Render("e edit · d remove · c clean · esc back · q quit")
+	case tabNotes:
+		return subtleStyle.Render("e edit · d remove · c clean · esc back · q quit")
+	default:
+		return subtleStyle.Render("esc back · q quit")
+	}
 }
 
 func renderResourceLine(item bwtypes.Item) string {
@@ -227,6 +356,18 @@ func shortID(id string) string {
 		return id
 	}
 	return id[:8]
+}
+
+func displayPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	base := filepath.Base(path)
+	if base == path {
+		return path
+	}
+	return "…/" + base
 }
 
 func truncate(value string, max int) string {

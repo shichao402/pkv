@@ -27,3 +27,9 @@ type resourcesLoadedMsg struct {
 	resources app.BrowseResources
 	err       error
 }
+
+type operationResultMsg struct {
+	message string
+	reload  bool
+	err     error
+}
