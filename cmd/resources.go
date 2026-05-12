@@ -432,17 +432,14 @@ var getSSHCmd = &cobra.Command{
 			}
 		}
 
-		allHosts := collectDeployedSSHHosts(st.SSHKeys)
-		if len(allHosts) == 0 {
-			fmt.Println("Cleaning known_hosts...")
-			if err := deployer.RemoveAllKnownHosts(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: known_hosts cleanup failed: %v\n", err)
-			}
-		} else {
-			fmt.Println("Rebuilding known_hosts...")
-			if err := deployer.DeployKnownHosts(allHosts); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: known_hosts update failed: %v\n", err)
-			}
+		// known_hosts prefill was removed in v0.9.x: scanning all configured
+		// hosts on every `pkv get` had a high failure surface (non-22 ports,
+		// VPC-internal IPs, offline clients) and provided no real security
+		// benefit over OpenSSH's first-connect fingerprint prompt. We still
+		// scrub the legacy PKV MANAGED block so users upgrading from <0.9
+		// don't carry stale entries forever.
+		if err := deployer.RemoveAllKnownHosts(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: known_hosts cleanup failed: %v\n", err)
 		}
 
 		if err := st.Save(); err != nil {
@@ -1415,13 +1412,10 @@ var removeSSHCmd = &cobra.Command{
 			removed++
 		}
 
-		remainingHosts := collectDeployedSSHHosts(st.SSHKeys)
-		if len(remainingHosts) == 0 {
-			if err := deployer.RemoveAllKnownHosts(); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
-			}
-		} else if err := deployer.DeployKnownHosts(remainingHosts); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: known_hosts rebuild failed: %v\n", err)
+		// known_hosts prefill removed (see getSSHCmd); always scrub the
+		// legacy managed block so it doesn't linger.
+		if err := deployer.RemoveAllKnownHosts(); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
 		}
 
 		if err := st.Save(); err != nil {
@@ -1631,17 +1625,10 @@ var cleanSSHCmd = &cobra.Command{
 			cleaned++
 		}
 
-		remainingHosts := collectDeployedSSHHosts(st.SSHKeys)
-		if len(remainingHosts) == 0 {
-			fmt.Println("  Cleaning known_hosts...")
-			if err := deployer.RemoveAllKnownHosts(); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
-			}
-		} else {
-			fmt.Println("  Rebuilding known_hosts...")
-			if err := deployer.DeployKnownHosts(remainingHosts); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: known_hosts rebuild failed: %v\n", err)
-			}
+		// known_hosts prefill removed (see getSSHCmd); always scrub the
+		// legacy managed block so it doesn't linger.
+		if err := deployer.RemoveAllKnownHosts(); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
 		}
 
 		if err := st.Save(); err != nil {
@@ -1783,18 +1770,6 @@ func readNoteContent(fileFlag, openEditorMessage string) (string, error) {
 		return "", fmt.Errorf("editor: %w", err)
 	}
 	return edited, nil
-}
-
-func collectDeployedSSHHosts(entries []state.SSHKeyEntry) []string {
-	var hosts []string
-	for i := range entries {
-		entry := &entries[i]
-		if !entry.IsDeployed() || len(entry.Hosts) == 0 {
-			continue
-		}
-		hosts = append(hosts, entry.Hosts...)
-	}
-	return hosts
 }
 
 func sanitizeSSHKeyName(name string) string {

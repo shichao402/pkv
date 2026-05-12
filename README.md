@@ -89,7 +89,7 @@ github.com
 *.corp.internal
 ```
 
-`pkv get <folder> ssh` 会把这些 Key 部署到本地，并基于 `Notes` 生成 `~/.ssh/config` 和 `known_hosts` 的 PKV 管理区块。
+`pkv get <folder> ssh` 会把这些 Key 部署到本地，并基于 `Notes` 生成 `~/.ssh/config` 的 PKV 管理区块。`known_hosts` 由 OpenSSH 在首次连接时自行管理，PKV 不预扫。
 
 ### 2. Env
 
@@ -170,7 +170,6 @@ pkv get prod ssh
 - 从 Bitwarden 同步 `prod` folder 里的所有 SSH Key
 - 写入 `~/.ssh/pkv_*`
 - 更新 `~/.ssh/config`
-- 更新 `~/.ssh/known_hosts`
 - 把部署状态写进 `~/.pkv/state.json`
 
 ### 4. 生成 env 产物
@@ -611,7 +610,7 @@ PKV 会写这些位置：
 
 ```text
 ~/.ssh/config
-~/.ssh/known_hosts
+~/.ssh/known_hosts          # 仅清理：PKV ≤0.9 可能写过 PKV MANAGED 区块；新版本只删不加
 ~/.ssh/pkv_*
 ~/.pkv/state.json
 ~/.pkv/env/<folder>.json

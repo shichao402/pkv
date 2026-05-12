@@ -85,12 +85,6 @@ func (d *Deployer) Deploy(item types.Item, folder string) error {
 	return nil
 }
 
-// DeployKnownHosts runs ssh-keyscan for all hosts across all deployed keys.
-// Call this once after all keys are deployed.
-func (d *Deployer) DeployKnownHosts(allHosts []string) error {
-	return ScanAndAddKnownHosts(d.sshDir, allHosts)
-}
-
 // Remove removes a deployed SSH key and its config entries.
 func (d *Deployer) Remove(entry state.SSHKeyEntry) error {
 	var errs []string

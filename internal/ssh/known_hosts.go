@@ -1,9 +1,7 @@
 package ssh
 
 import (
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -11,86 +9,14 @@ import (
 const knownHostsMarkerStart = "# >>> PKV MANAGED START <<<"
 const knownHostsMarkerEnd = "# >>> PKV MANAGED END <<<"
 
-// ScanAndAddKnownHosts runs ssh-keyscan for each host and appends results
-// into ~/.ssh/known_hosts inside a managed marker block.
-func ScanAndAddKnownHosts(sshDir string, hosts []string) error {
-	if len(hosts) == 0 {
-		return nil
-	}
-
-	knownHostsPath := filepath.Join(sshDir, "known_hosts")
-
-	// Deduplicate hosts and extract hostname (strip port)
-	scanTargets := make([]string, 0, len(hosts))
-	seen := map[string]bool{}
-	for _, h := range hosts {
-		hostname, port := parseHostPort(h)
-		var target string
-		if port != "" && port != "22" {
-			target = fmt.Sprintf("[%s]:%s", hostname, port)
-		} else {
-			target = hostname
-		}
-		if !seen[target] {
-			seen[target] = true
-			scanTargets = append(scanTargets, target)
-		}
-	}
-
-	// Run ssh-keyscan
-	var scannedKeys []string
-	var failedTargets []string
-	for _, target := range scanTargets {
-		out, err := exec.Command("ssh-keyscan", "-T", "5", target).Output()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: ssh-keyscan failed for '%s': %v\n", target, err)
-			failedTargets = append(failedTargets, target)
-			continue
-		}
-		lines := strings.TrimSpace(string(out))
-		if lines != "" {
-			scannedKeys = append(scannedKeys, lines)
-		}
-	}
-
-	if len(scannedKeys) == 0 {
-		// All targets unreachable from this client (common when hosts are
-		// internal IPs that only resolve from inside a VPC, or when the
-		// client is offline). known_hosts prefill is a nice-to-have: the
-		// SSH client will still prompt for fingerprint confirmation on
-		// first connect. Don't fail the whole `pkv get` for it.
-		fmt.Fprintf(os.Stderr, "  Note: ssh-keyscan unreachable for all hosts (%s); known_hosts left unchanged. SSH will confirm fingerprint on first connect.\n", strings.Join(failedTargets, ", "))
-		return nil
-	}
-	if len(failedTargets) > 0 {
-		fmt.Fprintf(os.Stderr, "  Warning: ssh-keyscan failed for %d host(s): %s\n", len(failedTargets), strings.Join(failedTargets, ", "))
-	}
-
-	existing, err := readFileOrEmpty(knownHostsPath)
-	if err != nil {
-		return err
-	}
-
-	// Remove old PKV managed block
-	existing = removeKnownHostsBlock(existing)
-
-	// Append new managed block
-	var block strings.Builder
-	block.WriteString("\n")
-	block.WriteString(knownHostsMarkerStart)
-	block.WriteString("\n")
-	for _, k := range scannedKeys {
-		block.WriteString(k)
-		block.WriteString("\n")
-	}
-	block.WriteString(knownHostsMarkerEnd)
-	block.WriteString("\n")
-
-	content := strings.TrimRight(existing, "\n") + block.String()
-	return os.WriteFile(knownHostsPath, []byte(content), 0o600)
-}
-
 // RemoveKnownHosts removes the PKV managed block from ~/.ssh/known_hosts.
+//
+// Historically PKV ran `ssh-keyscan` to prefill ~/.ssh/known_hosts during
+// `pkv get`. That was removed in v0.9.x: the prefill had a high failure
+// surface (non-22 ports, VPC-internal IPs, offline clients) and added no
+// real security over OpenSSH's first-connect fingerprint prompt — both
+// learn the host key from the host itself. We keep the cleanup half so
+// users upgrading from older versions don't carry stale managed blocks.
 func RemoveKnownHosts(sshDir string) error {
 	knownHostsPath := filepath.Join(sshDir, "known_hosts")
 
@@ -103,6 +29,10 @@ func RemoveKnownHosts(sshDir string) error {
 	}
 
 	cleaned := removeKnownHostsBlock(existing)
+	if cleaned == existing {
+		// No managed block; don't touch the file (preserves mtime/perms).
+		return nil
+	}
 	cleaned = collapseBlankLines(cleaned)
 	return os.WriteFile(knownHostsPath, []byte(cleaned), 0o600)
 }
