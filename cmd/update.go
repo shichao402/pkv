@@ -79,6 +79,12 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 	targetDir := filepath.Dir(resolvedPath)
 
+	// Opportunistically clean up a stale backup left over from a previous
+	// update on Windows, where the running .exe can be renamed but not
+	// removed until the process exits. By the next `pkv update` invocation
+	// the lock is gone, so a quiet best-effort remove succeeds.
+	_ = os.Remove(resolvedPath + ".bak")
+
 	fmt.Printf("Downloading %s...\n", assetName)
 	tmpFile, err := downloadAsset(downloadURL, targetDir)
 	if err != nil {
@@ -255,9 +261,7 @@ func replaceBinary(targetPath, newBinaryPath string) error {
 		if isCrossDeviceErr(err) {
 			if cpErr := copyAndReplace(newBinaryPath, targetPath); cpErr == nil {
 				_ = os.Remove(newBinaryPath)
-				if rmErr := os.Remove(backupPath); rmErr != nil && !os.IsNotExist(rmErr) {
-					fmt.Fprintf(os.Stderr, "Warning: failed to remove backup file %s: %v\n", backupPath, rmErr)
-				}
+				removeBackup(backupPath)
 				return nil
 			}
 		}
@@ -268,11 +272,25 @@ func replaceBinary(targetPath, newBinaryPath string) error {
 		return fmt.Errorf("install new binary: %w (rolled back to previous version)", err)
 	}
 
-	// Remove backup (non-critical, warn on failure)
-	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove backup file %s: %v\n", backupPath, err)
-	}
+	// Remove backup (non-critical, warn on failure on platforms where the
+	// remove is expected to succeed).
+	removeBackup(backupPath)
 	return nil
+}
+
+// removeBackup deletes the backup file left from a binary swap. On Windows the
+// running .exe is locked until the process exits, so a failure here is
+// expected and silenced — the next `pkv update` will clean it up. On other
+// platforms a failure is unexpected and worth a warning.
+func removeBackup(backupPath string) {
+	err := os.Remove(backupPath)
+	if err == nil || os.IsNotExist(err) {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Warning: failed to remove backup file %s: %v\n", backupPath, err)
 }
 
 // isCrossDeviceErr reports whether err is an EXDEV (cross-device link) error,
