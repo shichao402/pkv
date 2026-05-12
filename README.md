@@ -224,7 +224,7 @@ pkv get prod ssh --authorize
 
 - `add --generate` 在内存里生成一对 ed25519 keypair（默认；`--type rsa --bits 4096` 可选）
 - 私钥以 OpenSSH 格式写进 Bitwarden 的 SSH Key Item，**完全不落本地磁盘**
-- `--host` 写入条目的 `Notes`（一行一个），客户端 pull 后自动生成 ssh-config 别名；不传 `--host` 时回退到本机 hostname
+- `--host` 写入条目的 `Notes`（一行一个），客户端 pull 后自动生成 ssh-config 别名。**`--generate` 模式下 `--host` 必填**，因为机器无法可靠知道自己对外的可达地址（云上看到的是私网 IP / overlay IP，hostname 通常对外不解析），必须由你显式给出
 - `get --authorize` 把 folder 里每把 key 的公钥追加到当前机器的 `~/.ssh/authorized_keys`，去重，自动修正 `~/.ssh` 700 / `authorized_keys` 600
 
 回到客户端：
@@ -237,10 +237,10 @@ ssh web01.example.com   # 免密成功
 常用 flag：
 
 - `add` 侧
+  - `--host H`：**`--generate` 必填**；可重复（`--host a --host b`）或逗号分隔（`--host a,b`）；支持 `host:port`（端口会写进 ssh-config 的 `Port` 行）
   - `--type ed25519|rsa`：算法，默认 `ed25519`
   - `--bits N`：仅 RSA 使用，必须 ≥ 2048，默认 4096
-  - `--comment STR`：公钥注释，默认 `<user>@<hostname> (pkv)`
-  - `--host H`：可重复（`--host a --host b`）或逗号分隔（`--host a,b`）
+  - `--comment STR`：公钥注释，默认 `<user>@<hostname> [<ipv4>] (pkv)`，仅作标识用，不影响连接
 - `get` 侧
   - `--authorize`：把每把公钥追加到本机 `~/.ssh/authorized_keys`，用于在目标机器上完成 ssh-copy-id 的角色
 

@@ -906,31 +906,19 @@ func isPrivateIPv4(ip net.IP) bool {
 	return false
 }
 
-// resolveHosts returns the user-supplied --host values (trimmed, empties
-// dropped). When the flag is empty, it falls back to a routable address for
-// the current machine so that clients can still get a single ssh-config
-// alias. The fallback prefers a local IPv4 (public > RFC1918) over the
-// machine hostname, because hostnames like "VM-34-79-tencentos" are usually
-// not resolvable off the host and would break ssh-keyscan / ssh on the
-// client side. Hostname is only used as a last-resort fallback. Returns nil
-// when nothing is available.
-func resolveHosts(flagHosts []string) []string {
+// trimHosts returns the user-supplied --host values with whitespace trimmed
+// and empty entries dropped. Returns nil when nothing remains.
+func trimHosts(flagHosts []string) []string {
 	out := make([]string, 0, len(flagHosts))
 	for _, h := range flagHosts {
 		if h = strings.TrimSpace(h); h != "" {
 			out = append(out, h)
 		}
 	}
-	if len(out) > 0 {
-		return out
+	if len(out) == 0 {
+		return nil
 	}
-	if ip := localIPv4(); ip != "" {
-		return []string{ip}
-	}
-	if h, err := os.Hostname(); err == nil && h != "" {
-		return []string{h}
-	}
-	return nil
+	return out
 }
 
 var addSSHCmd = &cobra.Command{
@@ -962,6 +950,16 @@ var addSSHCmd = &cobra.Command{
 			if cfg.KeyName == "" {
 				return fmt.Errorf("--name is required with --generate")
 			}
+			hosts = trimHosts(addSSHHostsFlag)
+			if len(hosts) == 0 {
+				// Fallback to local IPv4 / hostname was removed in v0.9.x:
+				// a host can't reliably know its own externally reachable
+				// address (cloud VMs see private IPs, containers see
+				// overlay IPs, hostnames rarely resolve from outside).
+				// Force the user to be explicit about how clients should
+				// reach the host.
+				return fmt.Errorf("--host is required with --generate (e.g. --host my-server.example.com or --host 1.2.3.4:36000)")
+			}
 
 			comment := addSSHCommentFlag
 			if comment == "" {
@@ -974,13 +972,6 @@ var addSSHCmd = &cobra.Command{
 			opensshKey, publicKey, fingerprint, err = key.GenerateKeypair(addSSHTypeFlag, addSSHBitsFlag, comment)
 			if err != nil {
 				return fmt.Errorf("generate keypair: %w", err)
-			}
-
-			hosts = resolveHosts(addSSHHostsFlag)
-			if len(hosts) == 0 {
-				fmt.Fprintln(os.Stderr, "Warning: no --host provided and no local IPv4/hostname available; SSH config alias will not be generated on clients")
-			} else if len(addSSHHostsFlag) == 0 {
-				fmt.Fprintf(os.Stderr, "Note: no --host provided; using auto-detected host %q (override with --host to be safe)\n", hosts[0])
 			}
 		} else {
 			if len(addSSHHostsFlag) > 0 {
