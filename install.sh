@@ -31,6 +31,72 @@ detect_platform() {
     esac
 }
 
+compare_versions() {
+    local v1="${1#v}"
+    local v2="${2#v}"
+    local IFS=.
+    local -a v1_parts v2_parts
+
+    read -r -a v1_parts <<< "$v1"
+    read -r -a v2_parts <<< "$v2"
+
+    for i in 0 1 2; do
+        local v1_part="${v1_parts[$i]:-0}"
+        local v2_part="${v2_parts[$i]:-0}"
+        if [ "$v1_part" -gt "$v2_part" ]; then
+            echo "1"
+            return
+        fi
+        if [ "$v1_part" -lt "$v2_part" ]; then
+            echo "-1"
+            return
+        fi
+    done
+
+    echo "0"
+}
+
+check_existing_install() {
+    local binary_path="${INSTALL_DIR}/pkv"
+    if [ ! -x "$binary_path" ]; then
+        return
+    fi
+
+    if [ "$OS" = "darwin" ]; then
+        xattr -cr "$binary_path" 2>/dev/null || true
+    fi
+
+    local current_version
+    current_version=$("$binary_path" --version 2>&1 | grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 || true)
+    if [ -z "$current_version" ]; then
+        warn "Existing pkv found, but its version could not be detected."
+        if [ -t 0 ]; then
+            read -r -p "Overwrite existing install? [Y/n] " answer
+            if [ "$answer" = "n" ] || [ "$answer" = "N" ]; then
+                info "Skipped."
+                exit 0
+            fi
+        fi
+        return
+    fi
+
+    info "Current installed version: ${current_version}"
+    if [ "$(compare_versions "$current_version" "$VERSION")" -ge 0 ]; then
+        info "Already up to date."
+        exit 0
+    fi
+
+    if [ -t 0 ]; then
+        read -r -p "Update ${current_version} to ${VERSION}? [Y/n] " answer
+        if [ "$answer" = "n" ] || [ "$answer" = "N" ]; then
+            info "Skipped."
+            exit 0
+        fi
+    else
+        info "Updating ${current_version} to ${VERSION}."
+    fi
+}
+
 get_latest_version() {
     info "Fetching latest release..."
     RELEASES_URL="https://github.com/${REPO}/releases/latest"
@@ -126,13 +192,15 @@ main() {
     info "Platform: ${OS}/${ARCH}"
 
     get_latest_version
+    check_existing_install
     download_binary
     verify_checksum
     install_binary
     check_path
 
     echo ""
-    info "Done! Run 'pkv --version' to verify."
+    info "Installed version: $(${INSTALL_DIR}/pkv --version)"
+    info "Done!"
 }
 
 main "$@"

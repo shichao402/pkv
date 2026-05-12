@@ -52,13 +52,13 @@ PKV_NO_TUI=1 pkv list
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/ReleaseLatest/install.sh | bash
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/shichao402/pkv/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/shichao402/pkv/ReleaseLatest/install.ps1 | iex
 ```
 
 验证：
