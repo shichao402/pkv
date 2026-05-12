@@ -1,26 +1,20 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/shichao402/pkv/internal/bw"
-	bwtypes "github.com/shichao402/pkv/internal/bw/types"
-	"github.com/shichao402/pkv/internal/env"
-	"github.com/shichao402/pkv/internal/include"
+	"github.com/shichao402/pkv/internal/app"
 	"github.com/shichao402/pkv/internal/key"
-	"github.com/shichao402/pkv/internal/note"
 	"github.com/shichao402/pkv/internal/pathutil"
 	"github.com/shichao402/pkv/internal/securenote"
-	"github.com/shichao402/pkv/internal/ssh"
-	"github.com/shichao402/pkv/internal/state"
 )
 
 var (
@@ -54,54 +48,22 @@ var listCmd = &cobra.Command{
 	Short:   "List folders or resources in a folder",
 	Example: "  pkv list\n  pkv list prod",
 	Args:    cobra.MaximumNArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		switch len(args) {
-		case 0:
-			return listFoldersCmd.RunE(listFoldersCmd, nil)
-		case 1:
-			return listFolderCmd.RunE(listFolderCmd, args)
-		default:
-			return fmt.Errorf("usage: pkv list [folder]")
+	RunE: func(cmd *cobra.Command, args []string) error {
+		folder := ""
+		if len(args) == 1 {
+			folder = args[0]
 		}
+		_, err := app.List(commandContext(cmd), app.ListParams{Folder: folder, Resolved: listResolvedFlag}, cliReporter())
+		return err
 	},
 }
 
 var listFoldersCmd = &cobra.Command{
 	Use:   "folders",
 	Short: "List Bitwarden folders",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		folders, err := client.ListFolders(session)
-		if err != nil {
-			return fmt.Errorf("list folders failed: %w", err)
-		}
-		if len(folders) == 0 {
-			fmt.Println("No folders found.")
-			return nil
-		}
-
-		fmt.Println()
-		fmt.Println("Folders:")
-		fmt.Println()
-		fmt.Printf("%-36s  %s\n", "ID", "Name")
-		fmt.Printf("%-36s  %s\n", "----", "----")
-		for _, folder := range folders {
-			fmt.Printf("%-36s  %s\n", folder.ID, folder.Name)
-		}
-		fmt.Printf("\n%d folder(s) found.\n", len(folders))
-		return nil
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		_, err := app.List(commandContext(cmd), app.ListParams{}, cliReporter())
+		return err
 	},
 }
 
@@ -109,173 +71,9 @@ var listFolderCmd = &cobra.Command{
 	Use:   "folder <folder>",
 	Short: "List resources inside one folder",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-
-		sshKeys := bw.FilterSSHKeys(items)
-		envItem, hasEnv, err := bw.FindManagedEnvNote(items)
-		if err != nil {
-			return err
-		}
-		notes := bw.FilterConfigNotes(items)
-
-		// Direct includes (declaration order, no transitive expansion). Only
-		// shown when the folder actually has a pkv.include note. Resolved
-		// view below handles multi-level expansion separately.
-		includeItem, hasInclude, err := include.FindIncludeNote(items)
-		if err != nil {
-			return err
-		}
-		var directIncludes []string
-		if hasInclude {
-			directIncludes = include.ParseLines(includeItem.Notes)
-		}
-
-		fmt.Printf("\nFolder '%s'\n\n", folder)
-		fmt.Printf("SSH keys: %d\n", len(sshKeys))
-		if hasEnv {
-			fmt.Printf("Env note: %s (%s)\n", envItem.Name, envItem.ID)
-		} else {
-			fmt.Printf("Env note: none (create one named '%s')\n", bwtypes.ReservedEnvNoteName)
-		}
-		fmt.Printf("Config notes: %d\n", len(notes))
-
-		if len(directIncludes) > 0 {
-			fmt.Println("\nIncludes:")
-			for _, name := range directIncludes {
-				fmt.Printf("  %s\n", name)
-			}
-		}
-
-		if len(sshKeys) > 0 {
-			fmt.Println("\nSSH:")
-			for _, item := range sshKeys {
-				fmt.Printf("  %s  %s\n", item.ID, item.Name)
-			}
-		}
-		if len(notes) > 0 {
-			fmt.Println("\nNotes:")
-			for _, item := range notes {
-				fmt.Printf("  %s  %s\n", item.ID, item.Name)
-			}
-		}
-
-		if !listResolvedFlag {
-			return nil
-		}
-
-		// --resolved: expand env + note across the pkv.include chain and
-		// annotate each entry with its source folder. SSH is intentionally
-		// not expanded (MVP boundary from #114: include only affects env /
-		// note). When the folder has no pkv.include, the chain is just the
-		// folder itself and no [from:] annotations are added.
-		chain, err := client.LoadIncludeChain(session, folder)
-		if err != nil {
-			return fmt.Errorf("resolve include chain: %w", err)
-		}
-		chainNames := make([]string, len(chain))
-		for i, f := range chain {
-			chainNames[i] = f.Name
-		}
-
-		// Collect per-folder env bodies and config notes across the chain.
-		notesByFolder := make(map[string]string, len(chain))
-		itemsByFolder := make(map[string][]bwtypes.Item, len(chain))
-		for _, f := range chain {
-			var chainItems []bwtypes.Item
-			if f.ID == folderID {
-				// chain[0] is the current folder; reuse the items we already
-				// fetched to save a round trip.
-				chainItems = items
-			} else {
-				chainItems, err = client.ListItems(session, f.ID)
-				if err != nil {
-					return fmt.Errorf("list items for folder '%s': %w", f.Name, err)
-				}
-			}
-			itemsByFolder[f.Name] = bw.FilterConfigNotes(chainItems)
-			envNote, found, err := bw.FindManagedEnvNote(chainItems)
-			if err != nil {
-				return fmt.Errorf("folder '%s': %w", f.Name, err)
-			}
-			if found {
-				notesByFolder[f.Name] = envNote.Notes
-			}
-		}
-
-		fmt.Println("\nResolved view (env + note across pkv.include chain):")
-		if len(chain) > 1 {
-			fmt.Printf("  已展开 include：%s\n", strings.Join(chainNames, " -> "))
-		} else {
-			fmt.Println("  (no pkv.include on this folder; showing current folder only)")
-		}
-
-		// Env: merge and list each key with its winning source. Parse
-		// errors bubble up with the folder name from the merge package.
-		if len(notesByFolder) == 0 {
-			fmt.Println("\n  Env: none")
-		} else {
-			envResult, err := env.MergePkvEnvNotes(chainNames, notesByFolder)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("\n  Env (%d key(s)):\n", len(envResult.Vars))
-			for _, v := range envResult.Vars {
-				fmt.Printf("    [from: %s] %s\n", v.Source, v.Key)
-			}
-			if len(envResult.Conflicts) > 0 {
-				fmt.Println("\n  Env overrides:")
-				for _, c := range envResult.Conflicts {
-					fmt.Printf("    %s: winner=%s shadowed=%s\n",
-						c.Key, c.Winner, strings.Join(c.Losers, ","))
-				}
-			}
-		}
-
-		// Notes: merge and list each winning note with its source. Unlike
-		// env, notes include items only available via includes even when
-		// the current folder has no pkv.env.
-		merged := note.MergeNoteItems(chainNames, itemsByFolder)
-		fmt.Printf("\n  Notes (%d item(s)):\n", len(merged.Items))
-		for _, it := range merged.Items {
-			fmt.Printf("    [from: %s] %s\n", it.Source, it.Item.Name)
-		}
-		if len(merged.Conflicts) > 0 {
-			fmt.Println("\n  Note overrides:")
-			for _, c := range merged.Conflicts {
-				fmt.Printf("    %s: winner=%s shadowed=%s\n",
-					c.Name, c.Winner, strings.Join(c.Losers, ","))
-			}
-		}
-
-		// SSH stays folder-local. Call this out explicitly so the user
-		// understands the resolved view does not pull SSH keys across the
-		// chain.
-		fmt.Printf("\n  SSH: %d key(s) (not expanded through pkv.include; MVP)\n", len(sshKeys))
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.List(commandContext(cmd), app.ListParams{Folder: args[0], Resolved: listResolvedFlag}, cliReporter())
+		return err
 	},
 }
 
@@ -284,177 +82,24 @@ var getCmd = &cobra.Command{
 	Short:   "Get resources from a Bitwarden folder",
 	Example: "  pkv get prod ssh\n  pkv get prod env\n  pkv get prod note\n  pkv get prod all",
 	Args:    cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
+		reporter := cliReporter()
 		if getSSHAuthorizeFlag && kind != "ssh" && kind != "all" {
-			fmt.Fprintln(os.Stderr, "Warning: --authorize only applies to `ssh` (and `all`); ignoring")
+			reporter.Warn("Warning: --authorize only applies to `ssh` (and `all`); ignoring")
 		}
-		switch kind {
-		case "ssh":
-			return getSSHCmd.RunE(getSSHCmd, []string{folder})
-		case "env":
-			return getEnvCmd.RunE(getEnvCmd, []string{folder})
-		case "note":
-			return getNoteCmd.RunE(getNoteCmd, []string{folder})
-		case "all":
-			return runGetAll(folder)
-		default:
-			return fmt.Errorf("unknown resource type: %s (expected ssh, env, note, or all)", kind)
-		}
+		_, err := app.Get(commandContext(cmd), app.GetParams{Folder: folder, Kind: kind, AuthorizeSSH: getSSHAuthorizeFlag}, reporter)
+		return err
 	},
-}
-
-// runGetAll runs get ssh, get env, get note in sequence for the given folder.
-// It continues on error and aggregates all failures into a joined error at the end.
-// Each subcommand still performs its own auth/sync, but the BW_SESSION and
-// sync results are cached within one process, so the overhead is minimal.
-func runGetAll(folder string) error {
-	var errs []error
-
-	fmt.Println("=== SSH Keys ===")
-	if err := getSSHCmd.RunE(getSSHCmd, []string{folder}); err != nil {
-		fmt.Fprintf(os.Stderr, "get ssh failed: %v\n", err)
-		errs = append(errs, fmt.Errorf("ssh: %w", err))
-	}
-
-	fmt.Println("\n=== Env Artifacts ===")
-	if err := getEnvCmd.RunE(getEnvCmd, []string{folder}); err != nil {
-		fmt.Fprintf(os.Stderr, "get env failed: %v\n", err)
-		errs = append(errs, fmt.Errorf("env: %w", err))
-	}
-
-	fmt.Println("\n=== Config Notes ===")
-	if err := getNoteCmd.RunE(getNoteCmd, []string{folder}); err != nil {
-		fmt.Fprintf(os.Stderr, "get note failed: %v\n", err)
-		errs = append(errs, fmt.Errorf("note: %w", err))
-	}
-
-	return errors.Join(errs...)
 }
 
 var getSSHCmd = &cobra.Command{
 	Use:   "ssh <folder>",
 	Short: "Deploy SSH keys from a folder",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		fmt.Println("Listing SSH keys...")
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-
-		sshKeys := bw.FilterSSHKeys(items)
-
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-
-		deployer, err := ssh.NewDeployer(st)
-		if err != nil {
-			return fmt.Errorf("create ssh deployer failed: %w", err)
-		}
-		existing := st.FindDeployedSSHKeysByFolder(folder)
-		existingByID := make(map[string]state.SSHKeyEntry, len(existing))
-		for _, entry := range existing {
-			existingByID[entry.ItemID] = entry
-		}
-
-		remoteByID := make(map[string]bwtypes.Item, len(sshKeys))
-		for _, keyItem := range sshKeys {
-			remoteByID[keyItem.ID] = keyItem
-		}
-
-		for _, entry := range existing {
-			if _, ok := remoteByID[entry.ItemID]; ok {
-				continue
-			}
-			fmt.Printf("  Removing stale '%s'...\n", entry.KeyName)
-			if err := deployer.Remove(entry); err != nil {
-				return fmt.Errorf("remove stale key '%s': %w", entry.KeyName, err)
-			}
-			st.RemoveStoredSSHKey(entry.ItemID)
-		}
-
-		deployed := 0
-		authorized := 0
-		for _, keyItem := range sshKeys {
-			if entry, ok := existingByID[keyItem.ID]; ok && entry.KeyName != sanitizeSSHKeyName(keyItem.Name) {
-				if err := deployer.Remove(entry); err != nil {
-					return fmt.Errorf("refresh renamed key '%s': %w", entry.KeyName, err)
-				}
-				st.RemoveStoredSSHKey(entry.ItemID)
-			}
-
-			fmt.Printf("  Deploying '%s'...\n", keyItem.Name)
-			if err := deployer.Deploy(keyItem, folder); err != nil {
-				fmt.Fprintf(os.Stderr, "  Failed to deploy '%s': %v\n", keyItem.Name, err)
-				continue
-			}
-			deployed++
-
-			if getSSHAuthorizeFlag {
-				if keyItem.SSHKey == nil || keyItem.SSHKey.PublicKey == "" {
-					fmt.Fprintf(os.Stderr, "  Warning: '%s' has no public key in Bitwarden; skipping authorize\n", keyItem.Name)
-					continue
-				}
-				added, path, err := ssh.AppendAuthorizedKey(keyItem.SSHKey.PublicKey)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "  Warning: authorize for '%s' failed (%s): %v\n", keyItem.Name, path, err)
-					continue
-				}
-				if added {
-					fmt.Printf("    Appended to %s\n", path)
-					authorized++
-				} else {
-					fmt.Printf("    Already present in %s, skipped\n", path)
-				}
-			}
-		}
-
-		// known_hosts prefill was removed in v0.9.x: scanning all configured
-		// hosts on every `pkv get` had a high failure surface (non-22 ports,
-		// VPC-internal IPs, offline clients) and provided no real security
-		// benefit over OpenSSH's first-connect fingerprint prompt. We still
-		// scrub the legacy PKV MANAGED block so users upgrading from <0.9
-		// don't carry stale entries forever.
-		if err := deployer.RemoveAllKnownHosts(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: known_hosts cleanup failed: %v\n", err)
-		}
-
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-
-		if len(sshKeys) == 0 {
-			fmt.Println("No SSH keys found in folder.")
-			return nil
-		}
-		fmt.Printf("Deployed %d SSH key(s).\n", deployed)
-		if getSSHAuthorizeFlag {
-			fmt.Printf("Authorized %d key(s) on this host.\n", authorized)
-		}
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.GetSSH(commandContext(cmd), app.GetParams{Folder: args[0], AuthorizeSSH: getSSHAuthorizeFlag}, cliReporter())
+		return err
 	},
 }
 
@@ -462,135 +107,9 @@ var getEnvCmd = &cobra.Command{
 	Use:   "env <folder>",
 	Short: "Materialize env artifacts for a folder",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Resolving include chain for '%s'...\n", folder)
-		chain, err := client.LoadIncludeChain(session, folder)
-		if err != nil {
-			return fmt.Errorf("resolve include chain: %w", err)
-		}
-
-		chainNames := make([]string, len(chain))
-		for i, f := range chain {
-			chainNames[i] = f.Name
-		}
-		if len(chain) > 1 {
-			fmt.Printf("已展开 include：%s\n", strings.Join(chainNames, " -> "))
-		}
-
-		// Collect pkv.env body per folder on the chain. Missing env notes are
-		// legal (the folder may only contribute notes), so we just skip them.
-		notesByFolder := make(map[string]string, len(chain))
-		var currentItem bwtypes.Item
-		hasCurrent := false
-		for i, f := range chain {
-			items, err := client.ListItems(session, f.ID)
-			if err != nil {
-				return fmt.Errorf("list items for folder '%s': %w", f.Name, err)
-			}
-			envItem, found, err := bw.FindManagedEnvNote(items)
-			if err != nil {
-				return fmt.Errorf("folder '%s': %w", f.Name, err)
-			}
-			if found {
-				notesByFolder[f.Name] = envItem.Notes
-				if i == 0 {
-					currentItem = envItem
-					hasCurrent = true
-				}
-			}
-		}
-
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-		deployer := env.NewDeployer(st)
-
-		// If nothing on the whole chain provides env, fall back to the existing
-		// cleanup path keyed on the current folder. Previously deployed
-		// artifacts for this folder are removed and state pruned.
-		if len(notesByFolder) == 0 {
-			cleaned := 0
-			for _, entry := range st.FindEnvsByFolder(folder) {
-				if err := deployer.Remove(entry); err != nil {
-					return err
-				}
-				cleaned++
-			}
-			st.RemoveEnvsByFolder(folder)
-			if err := st.Save(); err != nil {
-				return fmt.Errorf("save state failed: %w", err)
-			}
-			if cleaned > 0 {
-				fmt.Printf("No env note found on chain. Cleaned %d local env artifact set(s) for folder '%s'.\n", cleaned, folder)
-			} else {
-				fmt.Printf("No env note found. Create one Secure Note named '%s'.\n", bwtypes.ReservedEnvNoteName)
-			}
-			return nil
-		}
-
-		result, err := env.MergePkvEnvNotes(chainNames, notesByFolder)
-		if err != nil {
-			return err
-		}
-
-		// Pre-flight conflict report: list every shadowed declaration so the
-		// user knows which include is being overridden by whom.
-		if len(result.Conflicts) > 0 {
-			fmt.Println("Env overrides:")
-			for _, c := range result.Conflicts {
-				fmt.Printf("  %s: winner=%s shadowed=%s\n", c.Key, c.Winner, strings.Join(c.Losers, ","))
-			}
-		}
-
-		entry, err := deployer.DeployMerged(folder, result, currentItem, hasCurrent)
-		if err != nil {
-			return err
-		}
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-
-		// Per-var source trace helps the user confirm which folder the value
-		// actually came from. Only print when the chain expanded; for the
-		// single-folder case this is noise.
-		if len(chain) > 1 {
-			for _, v := range result.Vars {
-				fmt.Printf("  %s [from: %s]\n", v.Key, v.Source)
-			}
-		}
-
-		// Tag each written artifact with its provenance. When the chain is a
-		// single folder the write lines stay in the legacy format.
-		fmt.Printf("Wrote env artifacts for folder '%s'.\n", folder)
-		if len(chain) > 1 {
-			artifactSource := entry.SourceFolder
-			if artifactSource == "" {
-				artifactSource = folder
-			}
-			fmt.Printf("  [from: %s] JSON: %s\n", artifactSource, entry.JSONPath)
-			fmt.Printf("  [from: %s] Shell: %s\n", artifactSource, entry.ShellPath)
-			fmt.Printf("  [from: %s] PowerShell: %s\n", artifactSource, entry.PowerShellPath)
-		} else {
-			fmt.Printf("  JSON: %s\n", entry.JSONPath)
-			fmt.Printf("  Shell: %s\n", entry.ShellPath)
-			fmt.Printf("  PowerShell: %s\n", entry.PowerShellPath)
-		}
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.GetEnv(commandContext(cmd), app.GetParams{Folder: args[0]}, cliReporter())
+		return err
 	},
 }
 
@@ -598,97 +117,9 @@ var getNoteCmd = &cobra.Command{
 	Use:   "note <folder>",
 	Short: "Sync config notes from a folder into the current directory",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		// Walk pkv.include chain. chain[0] is always the current folder.
-		chain, err := client.LoadIncludeChain(session, folder)
-		if err != nil {
-			return err
-		}
-
-		chainNames := make([]string, len(chain))
-		for i, f := range chain {
-			chainNames[i] = f.Name
-		}
-		if len(chain) > 1 {
-			fmt.Printf("已展开 include：%s\n", strings.Join(chainNames, " -> "))
-		}
-
-		// Per-folder config notes, already filtered to exclude pkv.env /
-		// pkv.include so the merge operates purely on disk-bound items.
-		itemsByFolder := make(map[string][]bwtypes.Item, len(chain))
-		for _, f := range chain {
-			items, err := client.ListItems(session, f.ID)
-			if err != nil {
-				return fmt.Errorf("list items for folder '%s': %w", f.Name, err)
-			}
-			itemsByFolder[f.Name] = bw.FilterConfigNotes(items)
-		}
-
-		merged := note.MergeNoteItems(chainNames, itemsByFolder)
-
-		if len(merged.Conflicts) > 0 {
-			fmt.Println("Note overrides:")
-			for _, c := range merged.Conflicts {
-				fmt.Printf("  %s: winner=%s shadowed=%s\n", c.Name, c.Winner, strings.Join(c.Losers, ","))
-			}
-		}
-
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("get working directory failed: %w", err)
-		}
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-
-		// Flatten merged items for the syncer. Syncer keys by item.ID; names
-		// are already unique across the merged set (first-wins).
-		notes := make([]bwtypes.Item, 0, len(merged.Items))
-		sourceByID := make(map[string]string, len(merged.Items))
-		for _, it := range merged.Items {
-			notes = append(notes, it.Item)
-			sourceByID[it.Item.ID] = it.Source
-		}
-
-		syncer := note.NewSyncer(st)
-		synced, err := syncer.SyncFolderWithSources(notes, sourceByID, cwd, folder)
-		if err != nil {
-			return err
-		}
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-
-		if len(notes) == 0 {
-			fmt.Printf("No config notes found in folder '%s'.\n", folder)
-			return nil
-		}
-		fmt.Printf("Synced %d note(s) to %s\n", synced, cwd)
-		if len(chain) > 1 {
-			for _, it := range merged.Items {
-				source := sourceByID[it.Item.ID]
-				if source == "" {
-					source = folder
-				}
-				fmt.Printf("  [from: %s] %s\n", source, filepath.Join(cwd, it.Item.Name))
-			}
-		}
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.GetNote(commandContext(cmd), app.GetParams{Folder: args[0]}, cliReporter())
+		return err
 	},
 }
 
@@ -697,7 +128,7 @@ var addCmd = &cobra.Command{
 	Short:   "Create resources in a Bitwarden folder",
 	Example: "  pkv add prod ssh --priv ~/.ssh/id_ed25519 --name github\n  pkv add prod env --file .env.prod\n  pkv add prod note --name app.secrets.json --file ./app.secrets.json",
 	Args:    cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {
 		case "ssh":
@@ -712,361 +143,111 @@ var addCmd = &cobra.Command{
 	},
 }
 
-// defaultKeyComment returns "<user>@<hostname>[ <ip>] (pkv)" for use as the
-// public key comment when --generate is invoked without --comment. The IPv4
-// segment is best-effort: a public IPv4 bound to a local interface is
-// preferred, falling back to a private (RFC1918) IPv4. When no usable IPv4
-// is found (offline machine, only IPv6, etc.) the IP segment is omitted.
-//
-// The IP only serves as provenance metadata baked into the OpenSSH public key
-// comment — SSH clients never parse it, so adding it here does not affect the
-// ssh-config generation that runs from the resource's separate host/port
-// fields during `pkv get`.
-func defaultKeyComment() string {
-	u := os.Getenv("USER")
-	if u == "" {
-		u = "user"
-	}
-	h, _ := os.Hostname()
-	if h == "" {
-		h = "host"
-	}
-	if ip := localIPv4(); ip != "" {
-		return fmt.Sprintf("%s@%s [%s] (pkv)", u, h, ip)
-	}
-	return fmt.Sprintf("%s@%s (pkv)", u, h)
-}
-
-// localIPv4 returns the best local IPv4 address for identifying the machine
-// that generated a key. It walks net.Interfaces, ignores down / loopback /
-// link-local addresses, and prefers a public address over an RFC1918 one.
-// When multiple candidates qualify, the result is deterministic: candidates
-// are sorted by (interface name, IP) ascending, so the same machine state
-// always picks the same address.
-// Returns "" when nothing usable is found.
-func localIPv4() string {
-	return selectIPv4(localIPv4Candidates())
-}
-
-// ipv4Candidate is a (interface name, IPv4) pair used by localIPv4.
-type ipv4Candidate struct {
-	iface string
-	ip    net.IP // already To4()'d, 4-byte form
-}
-
-// localIPv4Candidates collects all routable IPv4 addresses bound to local
-// interfaces. Loopback / down interfaces, virtual / container / VPN
-// interfaces (docker, veth, tailscale, utun, wg, ...) and loopback /
-// link-local / unspecified addresses are filtered out. Order is whatever
-// net.Interfaces returns; selectIPv4 imposes deterministic ordering.
-func localIPv4Candidates() []ipv4Candidate {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var out []ipv4Candidate
-	for _, ifi := range ifaces {
-		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if isVirtualIface(ifi.Name) {
-			continue
-		}
-		addrs, err := ifi.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			var ip net.IP
-			switch v := a.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			ip4 := ip.To4()
-			if ip4 == nil {
-				continue
-			}
-			if ip4.IsLoopback() || ip4.IsLinkLocalUnicast() || ip4.IsUnspecified() {
-				continue
-			}
-			out = append(out, ipv4Candidate{iface: ifi.Name, ip: ip4})
-		}
-	}
-	return out
-}
-
-// virtualIfacePrefixes lists interface name prefixes that indicate a
-// virtual / container / VPN interface whose IP should not be treated as the
-// machine's identity.
-//
-// Conservative on purpose: we'd rather skip a virtual interface than mis-
-// classify a real one. Real Linux interfaces like "eth0" / "ens3" / "enp0s3"
-// and macOS "en0" are intentionally NOT in this list.
-var virtualIfacePrefixes = []string{
-	"docker",    // docker0, docker_gwbridge
-	"br-",       // docker user-defined bridges
-	"veth",      // container virtual ethernet pair
-	"virbr",     // libvirt bridge
-	"vnet",      // libvirt/qemu tap
-	"vmnet",     // VMware
-	"vboxnet",   // VirtualBox
-	"tailscale", // Tailscale (Linux)
-	"tun",       // OpenVPN / generic tun (tun0, tunl0, ...)
-	"tap",       // generic tap
-	"utun",      // macOS VPN / Tailscale
-	"wg",        // WireGuard
-	"zt",        // ZeroTier
-	"cni",       // k8s CNI
-	"flannel",   // k8s flannel
-	"cali",      // k8s calico
-	"weave",     // k8s weave
-	"ppp",       // PPP / dial-up
-	"awdl",      // macOS Apple Wireless Direct Link
-	"llw",       // macOS low-latency WLAN
-	"gif",       // macOS generic tunnel interface
-	"stf",       // macOS 6to4 tunnel
-}
-
-// virtualIfaceExactNames lists exact interface names to skip. Used when a
-// short prefix would risk false positives on real interfaces.
-var virtualIfaceExactNames = map[string]struct{}{
-	"ap1":     {}, // macOS AirPlay-related virtual interface
-	"bridge0": {}, // macOS default bridge
-	"bridge1": {}, // macOS default bridge
-	"anpi0":   {}, // macOS internal
-	"anpi1":   {}, // macOS internal
-}
-
-// isVirtualIface reports whether the interface name looks like a virtual /
-// container / VPN interface that should not contribute to the machine's
-// public identity. Matching is case-insensitive: by prefix against
-// virtualIfacePrefixes, then by exact name against virtualIfaceExactNames.
-func isVirtualIface(name string) bool {
-	lower := strings.ToLower(name)
-	for _, p := range virtualIfacePrefixes {
-		if strings.HasPrefix(lower, p) {
-			return true
-		}
-	}
-	if _, ok := virtualIfaceExactNames[lower]; ok {
-		return true
-	}
-	return false
-}
-
-// selectIPv4 picks the best IPv4 from the given candidates. Candidates are
-// first sorted by (interface name, IP bytes) so the result is stable across
-// runs on the same machine. Then a non-private address wins over a private
-// one; within the same class, the sort order decides ties. Returns "" when
-// no candidate qualifies.
-func selectIPv4(candidates []ipv4Candidate) string {
-	if len(candidates) == 0 {
-		return ""
-	}
-	sorted := make([]ipv4Candidate, len(candidates))
-	copy(sorted, candidates)
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].iface != sorted[j].iface {
-			return sorted[i].iface < sorted[j].iface
-		}
-		// IPv4 byte-wise compare is equivalent to numeric compare here.
-		return string(sorted[i].ip) < string(sorted[j].ip)
-	})
-	var firstPrivate string
-	for _, c := range sorted {
-		if !isPrivateIPv4(c.ip) {
-			return c.ip.String()
-		}
-		if firstPrivate == "" {
-			firstPrivate = c.ip.String()
-		}
-	}
-	return firstPrivate
-}
-
-// isPrivateIPv4 reports whether ip is in an RFC1918 private range
-// (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) or the CGNAT range
-// (100.64.0.0/10, RFC6598). ip must already be a 4-byte IPv4.
-func isPrivateIPv4(ip net.IP) bool {
-	if len(ip) != 4 {
-		return false
-	}
-	switch {
-	case ip[0] == 10:
-		return true
-	case ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31:
-		return true
-	case ip[0] == 192 && ip[1] == 168:
-		return true
-	case ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127:
-		return true
-	}
-	return false
-}
-
-// trimHosts returns the user-supplied --host values with whitespace trimmed
-// and empty entries dropped. Returns nil when nothing remains.
-func trimHosts(flagHosts []string) []string {
-	out := make([]string, 0, len(flagHosts))
-	for _, h := range flagHosts {
-		if h = strings.TrimSpace(h); h != "" {
-			out = append(out, h)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 var addSSHCmd = &cobra.Command{
 	Use:   "ssh <folder>",
 	Short: "Add an SSH key to a folder",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		cfg := &key.InputConfig{
-			PrivatePath: addSSHPrivFlag,
-			PublicKey:   addSSHPubFlag,
-			KeyName:     addNameFlag,
-			Folder:      folder,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		params, err := buildAddSSHKeyParams(args[0])
+		if errors.Is(err, context.Canceled) {
+			return nil
 		}
-
-		var (
-			opensshKey  string
-			publicKey   string
-			fingerprint string
-			hosts       []string
-			generated   bool
-		)
-
-		if addSSHGenerateFlag {
-			generated = true
-			if addSSHPrivFlag != "" || addSSHPubFlag != "" {
-				return fmt.Errorf("--generate cannot be combined with --priv/--pub")
-			}
-			if cfg.KeyName == "" {
-				return fmt.Errorf("--name is required with --generate")
-			}
-			hosts = trimHosts(addSSHHostsFlag)
-			if len(hosts) == 0 {
-				// Fallback to local IPv4 / hostname was removed in v0.9.x:
-				// a host can't reliably know its own externally reachable
-				// address (cloud VMs see private IPs, containers see
-				// overlay IPs, hostnames rarely resolve from outside).
-				// Force the user to be explicit about how clients should
-				// reach the host.
-				return fmt.Errorf("--host is required with --generate (e.g. --host my-server.example.com or --host 1.2.3.4:36000)")
-			}
-
-			comment := addSSHCommentFlag
-			if comment == "" {
-				comment = defaultKeyComment()
-			}
-
-			fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
-			fmt.Printf("Generating %s keypair in memory...\n", addSSHTypeFlag)
-			var err error
-			opensshKey, publicKey, fingerprint, err = key.GenerateKeypair(addSSHTypeFlag, addSSHBitsFlag, comment)
-			if err != nil {
-				return fmt.Errorf("generate keypair: %w", err)
-			}
-		} else {
-			if len(addSSHHostsFlag) > 0 {
-				fmt.Fprintln(os.Stderr, "Warning: --host is only honored with --generate; ignoring (edit the item's notes in Bitwarden to set hosts)")
-			}
-
-			expandedPath, err := pathutil.ExpandTilde(cfg.PrivatePath)
-			if err != nil {
-				return fmt.Errorf("resolve home directory: %w", err)
-			}
-			cfg.PrivatePath = expandedPath
-
-			fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
-			if err := key.InteractiveInput(cfg); err != nil {
-				return fmt.Errorf("input failed: %w", err)
-			}
-
-			fmt.Printf("\nReading private key: %s\n", cfg.PrivatePath)
-			privateKeyBytes, err := os.ReadFile(cfg.PrivatePath)
-			if err != nil {
-				return fmt.Errorf("read private key failed: %w", err)
-			}
-
-			fmt.Println("Parsing and converting key...")
-			opensshKey, publicKey, fingerprint, err = key.ParseAndConvertKey(privateKeyBytes)
-			if err != nil {
-				return fmt.Errorf("parse key failed: %w", err)
-			}
-		}
-
-		client := bw.NewClient()
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
 		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
+			return err
 		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		// --generate is non-interactive; only the file-based path goes through ConfirmAndCreate.
-		if !generated {
-			confirm, err := key.ConfirmAndCreate(cfg, fingerprint)
-			if err != nil {
-				return fmt.Errorf("confirmation failed: %w", err)
-			}
-			if !confirm {
-				fmt.Println("Canceled.")
-				return nil
-			}
-		}
-
-		notes := strings.Join(hosts, "\n")
-
-		fmt.Println("Creating SSH key in Bitwarden...")
-		output, err := key.CreateBWSSHKey(client, session, cfg.KeyName, folderID, notes, opensshKey, publicKey, fingerprint)
-		if err != nil {
-			return fmt.Errorf("create SSH key failed: %w", err)
-		}
-
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-		st.AddStoredSSHKey(output, cfg.KeyName, fingerprint)
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-
-		fmt.Printf("\nSSH key '%s' added to folder '%s'\n", cfg.KeyName, folder)
-		fmt.Printf("  Fingerprint: %s\n", fingerprint)
-		if generated {
-			if len(hosts) > 0 {
-				fmt.Printf("  Hosts: %s\n", strings.Join(hosts, ", "))
-			}
-			fmt.Printf("  Public key: %s\n", publicKey)
-		}
-		return nil
+		_, err = app.AddSSHKey(commandContext(cmd), params, cliReporter())
+		return err
 	},
+}
+
+func buildAddSSHKeyParams(folder string) (app.AddSSHKeyParams, error) {
+	cfg := &key.InputConfig{
+		PrivatePath: addSSHPrivFlag,
+		PublicKey:   addSSHPubFlag,
+		KeyName:     addNameFlag,
+		Folder:      folder,
+	}
+
+	var (
+		opensshKey  string
+		publicKey   string
+		fingerprint string
+		hosts       []string
+		generated   bool
+	)
+
+	if addSSHGenerateFlag {
+		generated = true
+		if addSSHPrivFlag != "" || addSSHPubFlag != "" {
+			return app.AddSSHKeyParams{}, fmt.Errorf("--generate cannot be combined with --priv/--pub")
+		}
+		if cfg.KeyName == "" {
+			return app.AddSSHKeyParams{}, fmt.Errorf("--name is required with --generate")
+		}
+		hosts = trimHosts(addSSHHostsFlag)
+		if len(hosts) == 0 {
+			return app.AddSSHKeyParams{}, fmt.Errorf("--host is required with --generate (e.g. --host my-server.example.com or --host 1.2.3.4:36000)")
+		}
+		comment := addSSHCommentFlag
+		if comment == "" {
+			comment = defaultKeyComment()
+		}
+		fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
+		fmt.Printf("Generating %s keypair in memory...\n", addSSHTypeFlag)
+		var err error
+		opensshKey, publicKey, fingerprint, err = key.GenerateKeypair(addSSHTypeFlag, addSSHBitsFlag, comment)
+		if err != nil {
+			return app.AddSSHKeyParams{}, fmt.Errorf("generate keypair: %w", err)
+		}
+	} else {
+		if len(addSSHHostsFlag) > 0 {
+			fmt.Fprintln(os.Stderr, "Warning: --host is only honored with --generate; ignoring (edit the item's notes in Bitwarden to set hosts)")
+		}
+		expandedPath, err := pathutil.ExpandTilde(cfg.PrivatePath)
+		if err != nil {
+			return app.AddSSHKeyParams{}, fmt.Errorf("resolve home directory: %w", err)
+		}
+		cfg.PrivatePath = expandedPath
+		fmt.Printf("Adding SSH key to Bitwarden folder '%s'...\n", folder)
+		if err := key.InteractiveInput(cfg); err != nil {
+			return app.AddSSHKeyParams{}, fmt.Errorf("input failed: %w", err)
+		}
+		fmt.Printf("\nReading private key: %s\n", cfg.PrivatePath)
+		privateKeyBytes, err := os.ReadFile(cfg.PrivatePath)
+		if err != nil {
+			return app.AddSSHKeyParams{}, fmt.Errorf("read private key failed: %w", err)
+		}
+		fmt.Println("Parsing and converting key...")
+		opensshKey, publicKey, fingerprint, err = key.ParseAndConvertKey(privateKeyBytes)
+		if err != nil {
+			return app.AddSSHKeyParams{}, fmt.Errorf("parse key failed: %w", err)
+		}
+		confirm, err := key.ConfirmAndCreate(cfg, fingerprint)
+		if err != nil {
+			return app.AddSSHKeyParams{}, fmt.Errorf("confirmation failed: %w", err)
+		}
+		if !confirm {
+			fmt.Println("Canceled.")
+			return app.AddSSHKeyParams{}, context.Canceled
+		}
+	}
+
+	return app.AddSSHKeyParams{
+		Folder:      folder,
+		KeyName:     cfg.KeyName,
+		OpenSSHKey:  opensshKey,
+		PublicKey:   publicKey,
+		Fingerprint: fingerprint,
+		Hosts:       hosts,
+		Generated:   generated,
+	}, nil
 }
 
 var addEnvCmd = &cobra.Command{
 	Use:   "env <folder>",
 	Short: "Create or replace the folder env note",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
+	RunE: func(cmd *cobra.Command, args []string) error {
 		content, err := readNoteContent(addNoteFileFlag, "Opening editor to write env content (KEY=VALUE format)...")
 		if err != nil {
 			return err
@@ -1075,50 +256,8 @@ var addEnvCmd = &cobra.Command{
 			fmt.Println("Empty content, canceled.")
 			return nil
 		}
-
-		client := bw.NewClient()
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-
-		existing, found, err := bw.FindManagedEnvNote(items)
-		if err != nil {
-			return err
-		}
-		if found {
-			fmt.Printf("Updating env note '%s'...\n", existing.Name)
-			if err := securenote.UpdateContent(client, session, existing.ID, content); err != nil {
-				return err
-			}
-			fmt.Printf("Env note '%s' updated.\n", existing.Name)
-			return nil
-		}
-
-		fmt.Printf("Creating env note '%s'...\n", bwtypes.ReservedEnvNoteName)
-		itemID, err := securenote.Add(client, session, folderID, bwtypes.ReservedEnvNoteName, content)
-		if err != nil {
-			return fmt.Errorf("create env note failed: %w", err)
-		}
-		fmt.Printf("Env note '%s' created (ID: %s)\n", bwtypes.ReservedEnvNoteName, itemID)
-		return nil
+		_, err = app.AddEnv(commandContext(cmd), app.AddParams{Folder: args[0], Content: content}, cliReporter())
+		return err
 	},
 }
 
@@ -1126,15 +265,7 @@ var addNoteCmd = &cobra.Command{
 	Use:   "note <folder>",
 	Short: "Create a config note in a folder",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		if addNameFlag == "" {
-			return fmt.Errorf("--name is required: pkv add <folder> note --name <name> [--file <path>]")
-		}
-		if addNameFlag == bwtypes.ReservedEnvNoteName {
-			return fmt.Errorf("note name '%s' is reserved for folder env data", bwtypes.ReservedEnvNoteName)
-		}
-
+	RunE: func(cmd *cobra.Command, args []string) error {
 		content, err := readNoteContent(addNoteFileFlag, "Opening editor to write note content...")
 		if err != nil {
 			return err
@@ -1143,32 +274,8 @@ var addNoteCmd = &cobra.Command{
 			fmt.Println("Empty content, canceled.")
 			return nil
 		}
-
-		client := bw.NewClient()
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		fmt.Printf("Creating note '%s'...\n", addNameFlag)
-		itemID, err := securenote.Add(client, session, folderID, addNameFlag, content)
-		if err != nil {
-			return fmt.Errorf("create note failed: %w", err)
-		}
-		fmt.Printf("Note '%s' created (ID: %s)\n", addNameFlag, itemID)
-		return nil
+		_, err = app.AddNote(commandContext(cmd), app.AddParams{Folder: args[0], Name: addNameFlag, Content: content}, cliReporter())
+		return err
 	},
 }
 
@@ -1177,19 +284,21 @@ var editCmd = &cobra.Command{
 	Short:   "Edit resources in a Bitwarden folder",
 	Example: "  pkv edit prod env\n  pkv edit prod note app.secrets.json",
 	Args:    cobra.MinimumNArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {
 		case "env":
 			if len(args) != 2 {
 				return fmt.Errorf("usage: pkv edit <folder> env")
 			}
-			return editEnvCmd.RunE(editEnvCmd, []string{folder})
+			_, err := app.Edit(commandContext(cmd), app.EditParams{Folder: folder, Kind: kind, EditNote: securenote.Edit}, cliReporter())
+			return err
 		case "note":
 			if len(args) != 3 {
 				return fmt.Errorf("usage: pkv edit <folder> note <name-or-id>")
 			}
-			return editNoteCmd.RunE(editNoteCmd, []string{folder, args[2]})
+			_, err := app.Edit(commandContext(cmd), app.EditParams{Folder: folder, Kind: kind, NameOrID: args[2], EditNote: securenote.Edit}, cliReporter())
+			return err
 		default:
 			return fmt.Errorf("unknown resource type: %s (expected env or note)", kind)
 		}
@@ -1200,51 +309,9 @@ var editEnvCmd = &cobra.Command{
 	Use:   "env <folder>",
 	Short: "Edit the folder env note",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-
-		item, found, err := bw.FindManagedEnvNote(items)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return fmt.Errorf("no env note found in folder '%s' (expected Secure Note named '%s')", folder, bwtypes.ReservedEnvNoteName)
-		}
-
-		fmt.Printf("Editing '%s'...\n", item.Name)
-		updated, err := securenote.Edit(client, session, item)
-		if err != nil {
-			return fmt.Errorf("edit failed: %w", err)
-		}
-		if !updated {
-			fmt.Println("No changes made.")
-			return nil
-		}
-		fmt.Printf("Env note '%s' updated.\n", item.Name)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.EditEnv(commandContext(cmd), app.EditParams{Folder: args[0], EditNote: securenote.Edit}, cliReporter())
+		return err
 	},
 }
 
@@ -1252,49 +319,9 @@ var editNoteCmd = &cobra.Command{
 	Use:   "note <folder> <name-or-id>",
 	Short: "Edit a config note in a folder",
 	Args:  cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		nameOrID := args[1]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-
-		item, err := securenote.ResolveItem(bw.FilterConfigNotes(items), nameOrID)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("Editing '%s'...\n", item.Name)
-		updated, err := securenote.Edit(client, session, item)
-		if err != nil {
-			return fmt.Errorf("edit failed: %w", err)
-		}
-		if !updated {
-			fmt.Println("No changes made.")
-			return nil
-		}
-		fmt.Printf("Note '%s' updated.\n", item.Name)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.EditNote(commandContext(cmd), app.EditParams{Folder: args[0], NameOrID: args[1], EditNote: securenote.Edit}, cliReporter())
+		return err
 	},
 }
 
@@ -1303,24 +330,21 @@ var removeCmd = &cobra.Command{
 	Short:   "Remove resources from Bitwarden",
 	Example: "  pkv remove prod env\n  pkv remove prod ssh <item-id>\n  pkv remove prod note <item-id>",
 	Args:    cobra.MinimumNArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
 		switch kind {
 		case "env":
 			if len(args) != 2 {
 				return fmt.Errorf("usage: pkv remove <folder> env")
 			}
-			return removeEnvCmd.RunE(removeEnvCmd, []string{folder})
-		case "ssh":
+			_, err := app.Remove(commandContext(cmd), app.RemoveParams{Folder: folder, Kind: kind}, cliReporter())
+			return err
+		case "ssh", "note":
 			if len(args) < 3 {
-				return fmt.Errorf("usage: pkv remove <folder> ssh <id> [id2...]")
+				return fmt.Errorf("usage: pkv remove <folder> %s <id> [id2...]", kind)
 			}
-			return removeSSHCmd.RunE(removeSSHCmd, append([]string{folder}, args[2:]...))
-		case "note":
-			if len(args) < 3 {
-				return fmt.Errorf("usage: pkv remove <folder> note <id> [id2...]")
-			}
-			return removeNoteCmd.RunE(removeNoteCmd, append([]string{folder}, args[2:]...))
+			_, err := app.Remove(commandContext(cmd), app.RemoveParams{Folder: folder, Kind: kind, IDs: args[2:]}, cliReporter())
+			return err
 		default:
 			return fmt.Errorf("unknown resource type: %s (expected ssh, env, or note)", kind)
 		}
@@ -1331,89 +355,9 @@ var removeSSHCmd = &cobra.Command{
 	Use:   "ssh <folder> <id> [id2]...",
 	Short: "Remove SSH keys from a folder",
 	Args:  cobra.MinimumNArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		keyIDs := args[1:]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-		sshKeys := bw.FilterSSHKeys(items)
-		keyMap := make(map[string]string)
-		for _, item := range sshKeys {
-			keyMap[item.ID] = item.Name
-		}
-
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-
-		deployer, err := ssh.NewDeployer(st)
-		if err != nil {
-			return fmt.Errorf("create ssh deployer failed: %w", err)
-		}
-		deployedByID := make(map[string]state.SSHKeyEntry)
-		for _, entry := range st.FindDeployedSSHKeysByFolder(folder) {
-			deployedByID[entry.ItemID] = entry
-		}
-
-		fmt.Printf("Removing SSH keys from folder '%s'...\n", folder)
-		removed := 0
-		for _, id := range keyIDs {
-			name, found := keyMap[id]
-			if !found {
-				fmt.Fprintf(os.Stderr, "  Key '%s' not found in folder '%s'\n", id, folder)
-				continue
-			}
-			if err := client.DeleteItem(session, id); err != nil {
-				fmt.Fprintf(os.Stderr, "  Failed to remove '%s' (%s): %v\n", name, id, err)
-				continue
-			}
-			cleanupFailed := false
-			if entry, ok := deployedByID[id]; ok {
-				if err := deployer.Remove(entry); err != nil {
-					fmt.Fprintf(os.Stderr, "  Failed to clean local '%s': %v\n", name, err)
-					cleanupFailed = true
-				}
-			}
-			if !cleanupFailed {
-				st.RemoveStoredSSHKey(id)
-			}
-			fmt.Printf("  Removed '%s' (%s)\n", name, id)
-			removed++
-		}
-
-		// known_hosts prefill removed (see getSSHCmd); always scrub the
-		// legacy managed block so it doesn't linger.
-		if err := deployer.RemoveAllKnownHosts(); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
-		}
-
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-		fmt.Printf("Removed %d SSH key(s).\n", removed)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.RemoveSSH(commandContext(cmd), app.RemoveParams{Folder: args[0], IDs: args[1:]}, cliReporter())
+		return err
 	},
 }
 
@@ -1421,66 +365,9 @@ var removeEnvCmd = &cobra.Command{
 	Use:   "env <folder>",
 	Short: "Remove the folder env note from Bitwarden",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-		item, found, err := bw.FindManagedEnvNote(items)
-		if err != nil {
-			return err
-		}
-		if !found {
-			fmt.Printf("No env note found in folder '%s'.\n", folder)
-			return nil
-		}
-
-		if err := client.DeleteItem(session, item.ID); err != nil {
-			return fmt.Errorf("remove env note failed: %w", err)
-		}
-
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-		deployer := env.NewDeployer(st)
-		entries := st.FindEnvsByFolder(folder)
-		cleanupFailed := false
-		for _, entry := range entries {
-			if err := deployer.Remove(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "  Failed to clean local env artifacts for '%s': %v\n", entry.Name, err)
-				cleanupFailed = true
-			}
-		}
-		if !cleanupFailed {
-			st.RemoveEnvsByFolder(folder)
-		}
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-
-		fmt.Printf("Removed env note '%s' (%s).\n", item.Name, item.ID)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.RemoveEnv(commandContext(cmd), app.RemoveParams{Folder: args[0]}, cliReporter())
+		return err
 	},
 }
 
@@ -1488,79 +375,9 @@ var removeNoteCmd = &cobra.Command{
 	Use:   "note <folder> <id> [id2]...",
 	Short: "Remove config notes from a folder",
 	Args:  cobra.MinimumNArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		ids := args[1:]
-		client := bw.NewClient()
-
-		fmt.Println("Authenticating with Bitwarden...")
-		session, err := client.EnsureUnlocked()
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		fmt.Println("Syncing vault...")
-		if err := client.Sync(session); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-
-		fmt.Printf("Looking up folder '%s'...\n", folder)
-		folderID, err := client.GetFolderID(session, folder)
-		if err != nil {
-			return fmt.Errorf("folder lookup failed: %w", err)
-		}
-
-		items, err := client.ListItems(session, folderID)
-		if err != nil {
-			return fmt.Errorf("list items failed: %w", err)
-		}
-
-		notes := bw.FilterConfigNotes(items)
-		noteMap := make(map[string]string)
-		for _, item := range notes {
-			noteMap[item.ID] = item.Name
-		}
-
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-		syncer := note.NewSyncer(st)
-
-		fmt.Printf("Removing notes from folder '%s'...\n", folder)
-		removed := 0
-		for _, id := range ids {
-			name, found := noteMap[id]
-			if !found {
-				fmt.Fprintf(os.Stderr, "  Note '%s' not found in folder '%s'\n", id, folder)
-				continue
-			}
-			if err := client.DeleteItem(session, id); err != nil {
-				fmt.Fprintf(os.Stderr, "  Failed to remove '%s' (%s): %v\n", name, id, err)
-				continue
-			}
-			cleanupFailed := false
-			for _, entry := range st.Notes {
-				if entry.ItemID != id {
-					continue
-				}
-				if err := syncer.Remove(entry); err != nil {
-					fmt.Fprintf(os.Stderr, "  Failed to clean local '%s': %v\n", entry.FilePath, err)
-					cleanupFailed = true
-				}
-			}
-			if !cleanupFailed {
-				st.RemoveNote(id)
-			}
-			fmt.Printf("  Removed '%s' (%s)\n", name, id)
-			removed++
-		}
-
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-		fmt.Printf("Removed %d note(s).\n", removed)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.RemoveNote(commandContext(cmd), app.RemoveParams{Folder: args[0], IDs: args[1:]}, cliReporter())
+		return err
 	},
 }
 
@@ -1569,18 +386,9 @@ var cleanCmd = &cobra.Command{
 	Short:   "Clean local materialized resources",
 	Example: "  pkv clean prod ssh\n  pkv clean prod env\n  pkv clean prod note",
 	Args:    cobra.ExactArgs(2),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder, kind := args[0], args[1]
-		switch kind {
-		case "ssh":
-			return cleanSSHCmd.RunE(cleanSSHCmd, []string{folder})
-		case "env":
-			return cleanEnvCmd.RunE(cleanEnvCmd, []string{folder})
-		case "note":
-			return cleanNoteCmd.RunE(cleanNoteCmd, []string{folder})
-		default:
-			return fmt.Errorf("unknown resource type: %s (expected ssh, env, or note)", kind)
-		}
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.Clean(commandContext(cmd), app.CleanParams{Folder: args[0], Kind: args[1]}, cliReporter())
+		return err
 	},
 }
 
@@ -1588,45 +396,9 @@ var cleanSSHCmd = &cobra.Command{
 	Use:   "ssh <folder>",
 	Short: "Clean locally deployed SSH keys for a folder",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-
-		entries := st.FindDeployedSSHKeysByFolder(folder)
-		if len(entries) == 0 {
-			fmt.Printf("No SSH keys found for folder '%s'.\n", folder)
-			return nil
-		}
-
-		deployer, err := ssh.NewDeployer(st)
-		if err != nil {
-			return fmt.Errorf("create ssh deployer failed: %w", err)
-		}
-		cleaned := 0
-		for _, entry := range entries {
-			fmt.Printf("  Removing '%s'...\n", entry.KeyName)
-			if err := deployer.Remove(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "  Failed to remove '%s': %v\n", entry.KeyName, err)
-				continue
-			}
-			st.RemoveStoredSSHKey(entry.ItemID)
-			cleaned++
-		}
-
-		// known_hosts prefill removed (see getSSHCmd); always scrub the
-		// legacy managed block so it doesn't linger.
-		if err := deployer.RemoveAllKnownHosts(); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: known_hosts cleanup failed: %v\n", err)
-		}
-
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-		fmt.Printf("Cleaned %d SSH key(s) for folder '%s'.\n", cleaned, folder)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.CleanSSH(commandContext(cmd), app.CleanParams{Folder: args[0]}, cliReporter())
+		return err
 	},
 }
 
@@ -1634,41 +406,9 @@ var cleanEnvCmd = &cobra.Command{
 	Use:   "env <folder>",
 	Short: "Clean local env artifacts for a folder",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-
-		entries := st.FindEnvsByFolder(folder)
-		if len(entries) == 0 {
-			fmt.Printf("No env artifacts found for folder '%s'.\n", folder)
-			return nil
-		}
-
-		deployer := env.NewDeployer(st)
-		cleaned := 0
-		for _, entry := range entries {
-			fmt.Printf("  Removing env artifacts for '%s'...\n", entry.Name)
-			if err := deployer.Remove(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "  Failed to remove '%s': %v\n", entry.Name, err)
-				continue
-			}
-			cleaned++
-		}
-
-		allCleaned := cleaned == len(entries)
-		if allCleaned {
-			st.RemoveEnvsByFolder(folder)
-		} else {
-			fmt.Fprintln(os.Stderr, "Some env artifacts could not be removed; state was kept so you can retry clean.")
-		}
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-		fmt.Printf("Cleaned %d env artifact set(s) for '%s'.\n", cleaned, folder)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.CleanEnv(commandContext(cmd), app.CleanParams{Folder: args[0]}, cliReporter())
+		return err
 	},
 }
 
@@ -1676,45 +416,9 @@ var cleanNoteCmd = &cobra.Command{
 	Use:   "note <folder>",
 	Short: "Clean synced config notes for the current directory",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		folder := args[0]
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("get working directory failed: %w", err)
-		}
-		absDir, err := filepath.Abs(cwd)
-		if err == nil {
-			cwd = absDir
-		}
-
-		st, err := state.Load()
-		if err != nil {
-			return fmt.Errorf("load state failed: %w", err)
-		}
-
-		entries := st.FindSyncedNotes(folder, cwd)
-		if len(entries) == 0 {
-			fmt.Printf("No synced notes found for folder '%s' in %s.\n", folder, cwd)
-			return nil
-		}
-
-		syncer := note.NewSyncer(st)
-		cleaned := 0
-		for _, entry := range entries {
-			fmt.Printf("  Removing '%s'...\n", entry.FileName)
-			if err := syncer.Remove(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "  Failed to remove '%s': %v\n", entry.FileName, err)
-				continue
-			}
-			st.RemoveNoteForTarget(entry.ItemID, folder, cwd)
-			cleaned++
-		}
-
-		if err := st.Save(); err != nil {
-			return fmt.Errorf("save state failed: %w", err)
-		}
-		fmt.Printf("Cleaned %d note(s) for folder '%s' in %s.\n", cleaned, folder, cwd)
-		return nil
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.CleanNote(commandContext(cmd), app.CleanParams{Folder: args[0]}, cliReporter())
+		return err
 	},
 }
 
@@ -1763,15 +467,139 @@ func readNoteContent(fileFlag, openEditorMessage string) (string, error) {
 	return edited, nil
 }
 
-func sanitizeSSHKeyName(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		case r == ' ':
-			b.WriteRune('_')
+func defaultKeyComment() string {
+	u := os.Getenv("USER")
+	if u == "" {
+		u = "user"
+	}
+	h, _ := os.Hostname()
+	if h == "" {
+		h = "host"
+	}
+	if ip := localIPv4(); ip != "" {
+		return fmt.Sprintf("%s@%s [%s] (pkv)", u, h, ip)
+	}
+	return fmt.Sprintf("%s@%s (pkv)", u, h)
+}
+
+func localIPv4() string {
+	return selectIPv4(localIPv4Candidates())
+}
+
+type ipv4Candidate struct {
+	iface string
+	ip    net.IP
+}
+
+func localIPv4Candidates() []ipv4Candidate {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []ipv4Candidate
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isVirtualIface(ifi.Name) {
+			continue
+		}
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			if ip4.IsLoopback() || ip4.IsLinkLocalUnicast() || ip4.IsUnspecified() {
+				continue
+			}
+			out = append(out, ipv4Candidate{iface: ifi.Name, ip: ip4})
 		}
 	}
-	return b.String()
+	return out
+}
+
+var virtualIfacePrefixes = []string{
+	"docker", "br-", "veth", "virbr", "vnet", "vmnet", "vboxnet", "tailscale",
+	"tun", "tap", "utun", "wg", "zt", "cni", "flannel", "cali", "weave", "ppp",
+	"awdl", "llw", "gif", "stf",
+}
+
+var virtualIfaceExactNames = map[string]struct{}{
+	"ap1": {}, "bridge0": {}, "bridge1": {}, "anpi0": {}, "anpi1": {},
+}
+
+func isVirtualIface(name string) bool {
+	lower := strings.ToLower(name)
+	for _, p := range virtualIfacePrefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	_, ok := virtualIfaceExactNames[lower]
+	return ok
+}
+
+func selectIPv4(candidates []ipv4Candidate) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	sorted := make([]ipv4Candidate, len(candidates))
+	copy(sorted, candidates)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].iface != sorted[j].iface {
+			return sorted[i].iface < sorted[j].iface
+		}
+		return string(sorted[i].ip) < string(sorted[j].ip)
+	})
+	var firstPrivate string
+	for _, c := range sorted {
+		if !isPrivateIPv4(c.ip) {
+			return c.ip.String()
+		}
+		if firstPrivate == "" {
+			firstPrivate = c.ip.String()
+		}
+	}
+	return firstPrivate
+}
+
+func isPrivateIPv4(ip net.IP) bool {
+	if len(ip) != 4 {
+		return false
+	}
+	switch {
+	case ip[0] == 10:
+		return true
+	case ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31:
+		return true
+	case ip[0] == 192 && ip[1] == 168:
+		return true
+	case ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127:
+		return true
+	}
+	return false
+}
+
+func trimHosts(flagHosts []string) []string {
+	out := make([]string, 0, len(flagHosts))
+	for _, h := range flagHosts {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/shichao402/pkv/internal/bw"
+	"github.com/shichao402/pkv/internal/app"
 )
 
 var (
@@ -48,14 +48,11 @@ func init() {
 	rootCmd.AddCommand(unlockCmd)
 }
 
-func runUnlock(_ *cobra.Command, _ []string) error {
-	client := bw.NewClient()
-
-	// Status messages go to stderr so stdout stays parseable.
-	fmt.Fprintln(os.Stderr, "Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+func runUnlock(cmd *cobra.Command, _ []string) error {
+	reporter := app.TextReporter{Out: os.Stderr, Err: os.Stderr}
+	result, err := app.Unlock(commandContext(cmd), app.UnlockParams{}, reporter)
 	if err != nil {
-		return fmt.Errorf("authentication failed: %w", err)
+		return err
 	}
 
 	if unlockQuiet {
@@ -64,11 +61,9 @@ func runUnlock(_ *cobra.Command, _ []string) error {
 	}
 
 	if unlockExportFlag {
-		// Quote the value so future bw versions that might introduce shell
-		// metacharacters in session strings don't break the eval.
-		fmt.Printf("export BW_SESSION=%q\n", session)
+		fmt.Printf("export BW_SESSION=%q\n", result.Session)
 	} else {
-		fmt.Println(session)
+		fmt.Println(result.Session)
 	}
 	return nil
 }
