@@ -14,6 +14,13 @@ import (
 	"github.com/shichao402/pkv/internal/diag"
 )
 
+var legacyShellCmd = &cobra.Command{
+	Use:    "__legacy-shell",
+	Hidden: true,
+	Args:   cobra.NoArgs,
+	RunE:   runShell,
+}
+
 func runShell(_ *cobra.Command, _ []string) error {
 	rl, err := newShellReadline()
 	if err != nil {
@@ -141,6 +148,10 @@ func resetShellCommandState() {
 	addNoteFileFlag = ""
 	unlockExportFlag = false
 	unlockQuiet = false
+}
+
+func init() {
+	rootCmd.AddCommand(legacyShellCmd)
 }
 
 func translateShellArgs(args []string) ([]string, error) {

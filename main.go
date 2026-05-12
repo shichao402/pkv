@@ -1,7 +1,15 @@
 package main
 
-import "github.com/shichao402/pkv/cmd"
+import (
+	"fmt"
+	"os"
+
+	"github.com/shichao402/pkv/cmd"
+)
 
 func main() {
-	cmd.Execute()
+	if err := cmd.Execute(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
