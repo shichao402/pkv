@@ -14,7 +14,9 @@ DIST_DIR  = dist
 .PHONY: build clean release install lint lint-install lint-fix fmt test test-coverage check
 
 lint-install:
-	@command -v golangci-lint > /dev/null 2>&1 || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@if ! command -v golangci-lint > /dev/null 2>&1 || ! golangci-lint version 2>/dev/null | grep -q 'version 2\.'; then \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.0; \
+	fi
 
 lint: lint-install
 	golangci-lint run

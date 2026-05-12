@@ -1,12 +1,14 @@
-# pkv key add - SSH 密钥存储到 Bitwarden 设计文档
+# pkv add <folder> ssh - SSH 密钥存储到 Bitwarden 设计文档
 
 > 此文档从 Dec 项目迁移而来，原提交: 2541c39 (feat: add `dec key add`)
 > 需要在 pkv 项目中重新实现
 
 ## 功能概述
 
-添加 `pkv key add` 子命令，将 SSH 私钥导入 Bitwarden vault，存储为原生 SSH Key item (type 5)。
+`pkv add <folder> ssh` 将 SSH 私钥导入 Bitwarden vault，存储为原生 SSH Key item (type 5)。
 支持 PEM (PKCS1/PKCS8/EC) 和 OpenSSH 格式，使用纯 Go 自动转换，无需依赖外部 ssh-keygen。
+
+同一能力也可从 TUI 的 SSH tab 中通过 `a` 触发。
 
 ## 依赖
 
@@ -16,8 +18,9 @@
 ## CLI 接口
 
 ```
-pkv key add --priv ~/.ssh/id_rsa --pub "ssh-rsa AAAA..." --name "my-server-key"
-pkv key add  # 交互式输入
+pkv add prod ssh --priv ~/.ssh/id_rsa --pub "ssh-rsa AAAA..." --name "my-server-key"
+pkv add prod ssh  # CLI 交互式输入
+pkv          # 进入 TUI 后在 SSH tab 按 a 添加
 ```
 
 ### Flags

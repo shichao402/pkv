@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.0] - 2026-05-12
+
+### Added
+- 新增 Bubbletea TUI 入口：交互式终端中直接运行 `pkv` 会进入 TUI，也可以显式运行 `pkv tui`
+- TUI 支持浏览 folders、查看 SSH / Env / Notes、添加 SSH key、编辑 env/note、删除/清理确认、unlock 和刷新
+
+### Changed
+- `pkv` 不带参数的默认行为从 readline REPL 改为 TUI；传入任何命令参数时仍走直接 CLI
+- `PKV_NO_TUI=1`、`TERM=dumb`、脚本/管道/CI 等非 TTY 场景会保持 CLI 模式
+- 文档改为以 TUI + CLI 双入口描述当前交互方式
+
+### Removed
+- 移除旧 readline REPL、`pkv>` prompt 和 folder-first 简写/转译语法（例如 `pkv> prod ssh`）
+- 移除 `github.com/chzyer/readline` 依赖
+
 ## [v0.6.0] - 2026-05-04
 
 ### Added

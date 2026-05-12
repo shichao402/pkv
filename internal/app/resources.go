@@ -333,14 +333,16 @@ func GetSSH(ctx context.Context, params GetParams, r Reporter) (GetResult, error
 	}
 	existing := st.FindDeployedSSHKeysByFolder(folder)
 	existingByID := make(map[string]state.SSHKeyEntry, len(existing))
-	for _, entry := range existing {
+	for i := range existing {
+		entry := existing[i]
 		existingByID[entry.ItemID] = entry
 	}
 	remoteByID := make(map[string]bwtypes.Item, len(sshKeys))
 	for _, keyItem := range sshKeys {
 		remoteByID[keyItem.ID] = keyItem
 	}
-	for _, entry := range existing {
+	for i := range existing {
+		entry := existing[i]
 		if _, ok := remoteByID[entry.ItemID]; ok {
 			continue
 		}
@@ -463,7 +465,9 @@ func GetEnv(ctx context.Context, params GetParams, r Reporter) (GetResult, error
 	deployer := env.NewDeployer(st)
 	if len(notesByFolder) == 0 {
 		cleaned := 0
-		for _, entry := range st.FindEnvsByFolder(folder) {
+		entries := st.FindEnvsByFolder(folder)
+		for i := range entries {
+			entry := entries[i]
 			if err := deployer.Remove(entry); err != nil {
 				return GetResult{}, err
 			}
@@ -943,7 +947,9 @@ func RemoveSSH(ctx context.Context, params RemoveParams, r Reporter) (RemoveResu
 		return RemoveResult{}, fmt.Errorf("create ssh deployer failed: %w", err)
 	}
 	deployedByID := make(map[string]state.SSHKeyEntry)
-	for _, entry := range st.FindDeployedSSHKeysByFolder(params.Folder) {
+	deployedEntries := st.FindDeployedSSHKeysByFolder(params.Folder)
+	for i := range deployedEntries {
+		entry := deployedEntries[i]
 		deployedByID[entry.ItemID] = entry
 	}
 	r.Infof("Removing SSH keys from folder '%s'...\n", params.Folder)
@@ -1023,7 +1029,8 @@ func RemoveEnv(ctx context.Context, params RemoveParams, r Reporter) (RemoveResu
 	deployer := env.NewDeployer(st)
 	entries := st.FindEnvsByFolder(params.Folder)
 	cleanupFailed := false
-	for _, entry := range entries {
+	for i := range entries {
+		entry := entries[i]
 		if err := deployer.Remove(entry); err != nil {
 			r.Errorf("  Failed to clean local env artifacts for '%s': %v\n", entry.Name, err)
 			cleanupFailed = true
@@ -1086,7 +1093,8 @@ func RemoveNote(ctx context.Context, params RemoveParams, r Reporter) (RemoveRes
 			continue
 		}
 		cleanupFailed := false
-		for _, entry := range st.Notes {
+		for i := range st.Notes {
+			entry := st.Notes[i]
 			if entry.ItemID != id {
 				continue
 			}
@@ -1147,7 +1155,8 @@ func CleanSSH(ctx context.Context, params CleanParams, r Reporter) (CleanResult,
 		return CleanResult{}, fmt.Errorf("create ssh deployer failed: %w", err)
 	}
 	cleaned := 0
-	for _, entry := range entries {
+	for i := range entries {
+		entry := entries[i]
 		r.Infof("  Removing '%s'...\n", entry.KeyName)
 		if err := deployer.Remove(entry); err != nil {
 			r.Errorf("  Failed to remove '%s': %v\n", entry.KeyName, err)
@@ -1182,7 +1191,8 @@ func CleanEnv(ctx context.Context, params CleanParams, r Reporter) (CleanResult,
 	}
 	deployer := env.NewDeployer(st)
 	cleaned := 0
-	for _, entry := range entries {
+	for i := range entries {
+		entry := entries[i]
 		r.Infof("  Removing env artifacts for '%s'...\n", entry.Name)
 		if err := deployer.Remove(entry); err != nil {
 			r.Errorf("  Failed to remove '%s': %v\n", entry.Name, err)
@@ -1225,7 +1235,8 @@ func CleanNote(ctx context.Context, params CleanParams, r Reporter) (CleanResult
 	}
 	syncer := note.NewSyncer(st)
 	cleaned := 0
-	for _, entry := range entries {
+	for i := range entries {
+		entry := entries[i]
 		r.Infof("  Removing '%s'...\n", entry.FileName)
 		if err := syncer.Remove(entry); err != nil {
 			r.Errorf("  Failed to remove '%s': %v\n", entry.FileName, err)

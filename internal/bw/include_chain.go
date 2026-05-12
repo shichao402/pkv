@@ -76,9 +76,9 @@ func loadIncludeChain(
 	}
 
 	// Collectors for aggregated pre-flight errors.
-	missing := make(map[string]bool)        // referenced folder not in vault
-	duplicate := make(map[string]bool)      // referenced folder has duplicate names
-	tooManyNotes := make(map[string]error)  // folder -> FindIncludeNote error
+	missing := make(map[string]bool)         // referenced folder not in vault
+	duplicate := make(map[string]bool)       // referenced folder has duplicate names
+	tooManyNotes := make(map[string]error)   // folder -> FindIncludeNote error
 	ambiguousCI := make(map[string][]string) // user input -> candidate canonical names
 
 	// resolveName implements the two-pass lookup: exact match first, then

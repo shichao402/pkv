@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -186,7 +187,7 @@ func TestOperationResultReloadsCurrentFolder(t *testing.T) {
 }
 
 func readyModel() Model {
-	model := NewModel(nil)
+	model := NewModel(context.TODO())
 	folder := bwtypes.Folder{ID: "folder-1", Name: "prod"}
 	model.loading = false
 	model.folders = []bwtypes.Folder{folder}

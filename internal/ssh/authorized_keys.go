@@ -58,7 +58,11 @@ func AppendAuthorizedKey(publicKey string) (added bool, path string, err error) 
 	if err != nil {
 		return false, path, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close %s: %w", path, closeErr)
+		}
+	}()
 
 	// Best-effort: tighten perms on a pre-existing file with looser mode.
 	if info, statErr := f.Stat(); statErr == nil && info.Mode().Perm() != 0o600 {
@@ -68,14 +72,14 @@ func AppendAuthorizedKey(publicKey string) (added bool, path string, err error) 
 	if _, err := f.Write(prefix); err != nil {
 		return false, path, fmt.Errorf("write %s: %w", path, err)
 	}
-	if _, err := f.Write([]byte(publicKey + "\n")); err != nil {
+	if _, err := f.WriteString(publicKey + "\n"); err != nil {
 		return false, path, fmt.Errorf("write %s: %w", path, err)
 	}
 	return true, path, nil
 }
 
 // splitPubKey returns (type, base64Material, ok).
-func splitPubKey(line string) (string, string, bool) {
+func splitPubKey(line string) (keyType, material string, ok bool) {
 	fields := strings.Fields(line)
 	if len(fields) < 2 {
 		return "", "", false

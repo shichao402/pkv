@@ -19,7 +19,7 @@ var (
 	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57"))
 	tabStyle      = lipgloss.NewStyle().Padding(0, 1).Foreground(lipgloss.Color("245"))
-	activeTab     = tabStyle.Copy().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true)
+	activeTab     = tabStyle.Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true)
 )
 
 func render(m Model) string {
@@ -175,28 +175,28 @@ func renderDetail(m Model) string {
 	var b strings.Builder
 	b.WriteString(focusedStyle.Render(tabName(m.tab) + " Detail"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Name: %s\n", item.Name))
-	b.WriteString(fmt.Sprintf("ID:   %s\n", item.ID))
+	fmt.Fprintf(&b, "Name: %s\n", item.Name)
+	fmt.Fprintf(&b, "ID:   %s\n", item.ID)
 
 	switch m.tab {
 	case tabSSH:
 		if item.SSHKey != nil {
-			b.WriteString(fmt.Sprintf("Fingerprint: %s\n", item.SSHKey.KeyFingerprint))
-			b.WriteString(fmt.Sprintf("Public key:   %s\n", truncate(item.SSHKey.PublicKey, 72)))
+			fmt.Fprintf(&b, "Fingerprint: %s\n", item.SSHKey.KeyFingerprint)
+			fmt.Fprintf(&b, "Public key:   %s\n", truncate(item.SSHKey.PublicKey, 72))
 		} else {
 			b.WriteString(subtleStyle.Render("No SSH key payload returned."))
 			b.WriteString("\n")
 		}
 	case tabEnv:
 		keys := envKeys(item.Notes)
-		b.WriteString(fmt.Sprintf("Keys: %d\n", len(keys)))
+		fmt.Fprintf(&b, "Keys: %d\n", len(keys))
 		for _, key := range keys {
 			b.WriteString("  ")
 			b.WriteString(key)
 			b.WriteString("\n")
 		}
 	case tabNotes:
-		b.WriteString(fmt.Sprintf("Lines: %d\n", countLines(item.Notes)))
+		fmt.Fprintf(&b, "Lines: %d\n", countLines(item.Notes))
 		b.WriteString("Preview:\n")
 		b.WriteString(indent(truncate(item.Notes, 240)))
 		b.WriteString("\n")
@@ -210,7 +210,7 @@ func renderDetail(m Model) string {
 func renderConfirm(m Model) string {
 	var b strings.Builder
 	kind := tabKind(m.confirm.tab)
-	title := "Confirm"
+	var title string
 	verb := "clean local materialized resources for"
 	target := kind
 	if m.confirm.kind == confirmRemove {
@@ -225,10 +225,10 @@ func renderConfirm(m Model) string {
 	}
 	b.WriteString(focusedStyle.Render(title))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Folder: %s\n", m.folderName()))
-	b.WriteString(fmt.Sprintf("Action: %s %s\n", verb, target))
+	fmt.Fprintf(&b, "Folder: %s\n", m.folderName())
+	fmt.Fprintf(&b, "Action: %s %s\n", verb, target)
 	if m.confirm.kind == confirmRemove && m.confirm.item.ID != "" {
-		b.WriteString(fmt.Sprintf("ID:     %s\n", m.confirm.item.ID))
+		fmt.Fprintf(&b, "ID:     %s\n", m.confirm.item.ID)
 	}
 	b.WriteString("\n")
 	b.WriteString(errorStyle.Render("This action changes Bitwarden or local materialized files."))
@@ -241,10 +241,10 @@ func renderEdit(m Model) string {
 	var b strings.Builder
 	b.WriteString(focusedStyle.Render(fmt.Sprintf("Edit %s", tabName(m.edit.tab))))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Folder: %s\n", m.folderName()))
-	b.WriteString(fmt.Sprintf("Item:   %s\n", m.edit.item.Name))
+	fmt.Fprintf(&b, "Folder: %s\n", m.folderName())
+	fmt.Fprintf(&b, "Item:   %s\n", m.edit.item.Name)
 	if m.edit.item.ID != "" {
-		b.WriteString(fmt.Sprintf("ID:     %s\n", m.edit.item.ID))
+		fmt.Fprintf(&b, "ID:     %s\n", m.edit.item.ID)
 	}
 	b.WriteString("\n")
 	b.WriteString(m.edit.content.View())
@@ -257,7 +257,7 @@ func renderSSHWizard(m Model) string {
 	var b strings.Builder
 	b.WriteString(focusedStyle.Render("Add SSH Key"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("Folder: %s\n\n", m.folderName()))
+	fmt.Fprintf(&b, "Folder: %s\n\n", m.folderName())
 	if m.sshWizard.err != "" {
 		b.WriteString(errorStyle.Render(m.sshWizard.err))
 		b.WriteString("\n\n")
@@ -284,10 +284,10 @@ func renderSSHWizard(m Model) string {
 			publicKey = m.sshWizard.derivedPub
 		}
 		b.WriteString("Summary\n\n")
-		b.WriteString(fmt.Sprintf("Key name:    %s\n", strings.TrimSpace(m.sshWizard.nameInput.Value())))
-		b.WriteString(fmt.Sprintf("Private key: %s\n", displayPath(m.sshWizard.privateInput.Value())))
-		b.WriteString(fmt.Sprintf("Fingerprint: %s\n", m.sshWizard.fingerprint))
-		b.WriteString(fmt.Sprintf("Public key:  %s\n", truncate(publicKey, 72)))
+		fmt.Fprintf(&b, "Key name:    %s\n", strings.TrimSpace(m.sshWizard.nameInput.Value()))
+		fmt.Fprintf(&b, "Private key: %s\n", displayPath(m.sshWizard.privateInput.Value()))
+		fmt.Fprintf(&b, "Fingerprint: %s\n", m.sshWizard.fingerprint)
+		fmt.Fprintf(&b, "Public key:  %s\n", truncate(publicKey, 72))
 		b.WriteString("\n")
 		b.WriteString(subtleStyle.Render("y/ctrl+s create · n/esc cancel"))
 	}
@@ -370,15 +370,15 @@ func displayPath(path string) string {
 	return "…/" + base
 }
 
-func truncate(value string, max int) string {
+func truncate(value string, maxLen int) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= max {
+	if len(value) <= maxLen {
 		return value
 	}
-	if max <= 1 {
-		return value[:max]
+	if maxLen <= 1 {
+		return value[:maxLen]
 	}
-	return value[:max-1] + "…"
+	return value[:maxLen-1] + "…"
 }
 
 func countLines(value string) int {

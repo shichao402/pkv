@@ -44,7 +44,7 @@ func GenerateKeypair(algo string, bits int, comment string) (opensshPriv, public
 			return "", "", "", fmt.Errorf("generate ed25519 key: %w", genErr)
 		}
 		// ssh.MarshalPrivateKey for ed25519 expects the *ed25519.PrivateKey-shaped value;
-		// pass a pointer so the type switch inside x/crypto/ssh recognises it.
+		// pass a pointer so the type switch inside x/crypto/ssh recognizes it.
 		rawKey = &priv
 	case AlgoRSA:
 		if bits < minRSABits {

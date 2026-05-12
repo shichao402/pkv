@@ -230,9 +230,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.quit), key.Matches(msg, m.keys.ctrlC):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.escape):
-		if m.focus == focusDetail {
+		switch m.focus {
+		case focusDetail:
 			m.focus = focusResources
-		} else if m.focus == focusResources {
+		case focusResources:
 			m.focus = focusFolders
 		}
 		return m, nil
@@ -265,9 +266,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveSelection(1)
 		return m, nil
 	case key.Matches(msg, m.keys.left):
-		if m.focus == focusResources {
+		switch m.focus {
+		case focusResources:
 			m.previousTab()
-		} else if m.focus == focusDetail {
+		case focusDetail:
 			m.focus = focusResources
 		}
 		return m, nil
@@ -818,7 +820,7 @@ func newSSHWizardState() sshWizardState {
 	}
 }
 
-func parsePrivateKeyPath(value string) (string, string, string, string, error) {
+func parsePrivateKeyPath(value string) (expandedPath, openSSHKey, publicKey, fingerprint string, err error) {
 	privatePath := strings.TrimSpace(value)
 	if privatePath == "" {
 		return "", "", "", "", fmt.Errorf("private key path is required")
@@ -834,7 +836,7 @@ func parsePrivateKeyPath(value string) (string, string, string, string, error) {
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("read private key: %w", err)
 	}
-	openSSHKey, publicKey, fingerprint, err := pkvkey.ParseAndConvertKey(privateKeyBytes)
+	openSSHKey, publicKey, fingerprint, err = pkvkey.ParseAndConvertKey(privateKeyBytes)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("parse private key: %w", err)
 	}

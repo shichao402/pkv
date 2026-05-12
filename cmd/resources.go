@@ -58,25 +58,6 @@ var listCmd = &cobra.Command{
 	},
 }
 
-var listFoldersCmd = &cobra.Command{
-	Use:   "folders",
-	Short: "List Bitwarden folders",
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		_, err := app.List(commandContext(cmd), app.ListParams{}, cliReporter())
-		return err
-	},
-}
-
-var listFolderCmd = &cobra.Command{
-	Use:   "folder <folder>",
-	Short: "List resources inside one folder",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.List(commandContext(cmd), app.ListParams{Folder: args[0], Resolved: listResolvedFlag}, cliReporter())
-		return err
-	},
-}
-
 var getCmd = &cobra.Command{
 	Use:     "get <folder> <ssh|env|note|all>",
 	Short:   "Get resources from a Bitwarden folder",
@@ -89,36 +70,6 @@ var getCmd = &cobra.Command{
 			reporter.Warn("Warning: --authorize only applies to `ssh` (and `all`); ignoring")
 		}
 		_, err := app.Get(commandContext(cmd), app.GetParams{Folder: folder, Kind: kind, AuthorizeSSH: getSSHAuthorizeFlag}, reporter)
-		return err
-	},
-}
-
-var getSSHCmd = &cobra.Command{
-	Use:   "ssh <folder>",
-	Short: "Deploy SSH keys from a folder",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.GetSSH(commandContext(cmd), app.GetParams{Folder: args[0], AuthorizeSSH: getSSHAuthorizeFlag}, cliReporter())
-		return err
-	},
-}
-
-var getEnvCmd = &cobra.Command{
-	Use:   "env <folder>",
-	Short: "Materialize env artifacts for a folder",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.GetEnv(commandContext(cmd), app.GetParams{Folder: args[0]}, cliReporter())
-		return err
-	},
-}
-
-var getNoteCmd = &cobra.Command{
-	Use:   "note <folder>",
-	Short: "Sync config notes from a folder into the current directory",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.GetNote(commandContext(cmd), app.GetParams{Folder: args[0]}, cliReporter())
 		return err
 	},
 }
@@ -305,26 +256,6 @@ var editCmd = &cobra.Command{
 	},
 }
 
-var editEnvCmd = &cobra.Command{
-	Use:   "env <folder>",
-	Short: "Edit the folder env note",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.EditEnv(commandContext(cmd), app.EditParams{Folder: args[0], EditNote: securenote.Edit}, cliReporter())
-		return err
-	},
-}
-
-var editNoteCmd = &cobra.Command{
-	Use:   "note <folder> <name-or-id>",
-	Short: "Edit a config note in a folder",
-	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.EditNote(commandContext(cmd), app.EditParams{Folder: args[0], NameOrID: args[1], EditNote: securenote.Edit}, cliReporter())
-		return err
-	},
-}
-
 var removeCmd = &cobra.Command{
 	Use:     "remove <folder> <ssh|env|note> [id...]",
 	Short:   "Remove resources from Bitwarden",
@@ -351,36 +282,6 @@ var removeCmd = &cobra.Command{
 	},
 }
 
-var removeSSHCmd = &cobra.Command{
-	Use:   "ssh <folder> <id> [id2]...",
-	Short: "Remove SSH keys from a folder",
-	Args:  cobra.MinimumNArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.RemoveSSH(commandContext(cmd), app.RemoveParams{Folder: args[0], IDs: args[1:]}, cliReporter())
-		return err
-	},
-}
-
-var removeEnvCmd = &cobra.Command{
-	Use:   "env <folder>",
-	Short: "Remove the folder env note from Bitwarden",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.RemoveEnv(commandContext(cmd), app.RemoveParams{Folder: args[0]}, cliReporter())
-		return err
-	},
-}
-
-var removeNoteCmd = &cobra.Command{
-	Use:   "note <folder> <id> [id2]...",
-	Short: "Remove config notes from a folder",
-	Args:  cobra.MinimumNArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.RemoveNote(commandContext(cmd), app.RemoveParams{Folder: args[0], IDs: args[1:]}, cliReporter())
-		return err
-	},
-}
-
 var cleanCmd = &cobra.Command{
 	Use:     "clean <folder> <ssh|env|note>",
 	Short:   "Clean local materialized resources",
@@ -388,36 +289,6 @@ var cleanCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, err := app.Clean(commandContext(cmd), app.CleanParams{Folder: args[0], Kind: args[1]}, cliReporter())
-		return err
-	},
-}
-
-var cleanSSHCmd = &cobra.Command{
-	Use:   "ssh <folder>",
-	Short: "Clean locally deployed SSH keys for a folder",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.CleanSSH(commandContext(cmd), app.CleanParams{Folder: args[0]}, cliReporter())
-		return err
-	},
-}
-
-var cleanEnvCmd = &cobra.Command{
-	Use:   "env <folder>",
-	Short: "Clean local env artifacts for a folder",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.CleanEnv(commandContext(cmd), app.CleanParams{Folder: args[0]}, cliReporter())
-		return err
-	},
-}
-
-var cleanNoteCmd = &cobra.Command{
-	Use:   "note <folder>",
-	Short: "Clean synced config notes for the current directory",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := app.CleanNote(commandContext(cmd), app.CleanParams{Folder: args[0]}, cliReporter())
 		return err
 	},
 }

@@ -13,7 +13,12 @@
 
 ## 命令模型
 
-新的命令只有这一套：
+PKV 现在有两个入口：
+
+- `pkv`：在交互式终端里默认进入 TUI
+- `pkv <command>`：传入任何参数时走直接 CLI 命令
+
+CLI 命令保持这一套：
 
 ```bash
 pkv list [folder]
@@ -22,29 +27,25 @@ pkv add <folder> <ssh|env|note>
 pkv edit <folder> <env|note> [name-or-id]
 pkv remove <folder> <ssh|env|note> [id...]
 pkv clean <folder> <ssh|env|note>
+pkv unlock
 pkv update
 ```
 
-旧命令模型已经移除，不再维护兼容层。
+旧命令模型和旧 readline REPL 已经移除，不再维护兼容层。
 
-如果直接执行 `pkv`，会进入交互模式：
+如果直接执行 `pkv`，会进入 TUI：
 
-```text
-$ pkv
-Interactive mode. Type 'help' for commands, 'exit' to quit.
-Examples: 'get dev env' or 'dev env'.
-pkv>
+```bash
+pkv
 ```
 
-交互模式里同一个 `pkv` 进程会把 `BW_SESSION` 保持在内存中，所以你在一次会话里连续执行多条命令，不需要每次都重新输入主密码。
+TUI 会展示 Bitwarden folders，进入 folder 后可在 SSH / Env / Notes 三个 tab 间浏览资源，并支持 SSH 添加、env/note 编辑、删除/清理确认、unlock 和刷新等交互。
 
-对于连续的只读命令，PKV 还会在同一进程里短时复用最近一次成功的 `bw sync` 结果，避免每条命令都重复触发一次远端同步。
-一旦本轮进程里成功执行了新增、编辑、删除等 Bitwarden 写操作，下一次读取仍会重新 `bw sync`，不会继续复用旧结果。
+如果你在脚本、管道、CI、非 TTY 环境，或显式设置 `PKV_NO_TUI=1` / `TERM=dumb`，PKV 会保持 CLI 模式：
 
-现在也支持常见终端操作：
-
-- `↑` / `↓` 切换历史命令
-- `Ctrl+R` 反向搜索历史命令
+```bash
+PKV_NO_TUI=1 pkv list
+```
 
 ## 安装
 
@@ -250,7 +251,7 @@ ssh web01.example.com   # 免密成功
 - `--authorize` 失败不会回滚部署（部署成功 vs authorize 是两件事）；失败时打 warning，可手动 `cat ~/.ssh/pkv_<name>.pub >> ~/.ssh/authorized_keys`
 - 私钥仅经过 BW，本地任何时候都没有副本，丢失主密码即丢失这把 key
 
-## 交互模式
+## TUI 模式
 
 直接运行：
 
@@ -258,33 +259,36 @@ ssh web01.example.com   # 免密成功
 pkv
 ```
 
-交互模式里既支持完整命令，也支持简写。
+在交互式终端里，`pkv` 会进入 TUI。也可以显式运行：
 
-### 完整命令
-
-```text
-pkv> list
-pkv> list prod
-pkv> get prod ssh
-pkv> get prod env
-pkv> get prod note
+```bash
+pkv tui
 ```
 
-### 简写命令
+TUI 当前支持：
 
-```text
-pkv> prod list
-pkv> prod ssh
-pkv> prod env
-pkv> prod note
-pkv> prod env clean
-pkv> prod note add --name app.secrets.json --file ./app.secrets.json
+- 浏览 Bitwarden folders
+- 查看 folder 下的 SSH / Env / Notes 资源
+- `a` 添加 SSH key
+- `e` 编辑 env 或 note
+- `d` 删除远端资源（带确认）
+- `c` 清理本地产物（带确认）
+- `u` 解锁 Bitwarden vault
+- `r` 刷新，`esc` 返回，`q` 退出
+
+直接 CLI 命令仍然可用，适合脚本和自动化：
+
+```bash
+pkv list prod
+pkv get prod ssh
+pkv get prod env
+pkv get prod note
 ```
 
-退出方式：
+需要禁用默认 TUI 时使用：
 
-```text
-pkv> exit
+```bash
+PKV_NO_TUI=1 pkv list
 ```
 
 ## 常用命令
@@ -581,18 +585,11 @@ pkv get vikunja-tasker env
 
 这样 `pkv` 本身从头到尾不接触主密码，`BW_SESSION` 只在本次 job 生命周期内有效——即使泄漏也能通过 `bw lock` 单独失效这一条会话，不用轮换整个 vault。
 
-### 交互模式里的 unlock
+### TUI 里的 unlock
 
-在 `pkv>` REPL 里也可以手动触发一次解锁来预热 session：
+TUI 里可以按 `u` 手动触发一次解锁来预热 session。
 
-```text
-pkv> unlock
-Authenticating with Bitwarden...
-Vault unlocked.
-pkv> lyra note
-```
-
-REPL 里 `unlock` **不会把 session 打到屏幕上**，只确认解锁成功。session 会留在当前进程内，后续命令复用。
+TUI 的 unlock **不会把 session 打到屏幕上**，只确认解锁成功。session 会留在当前进程内，后续操作复用。
 
 ### 为什么 PKV 不提供 `--master-pass`
 
@@ -684,7 +681,7 @@ bw --version
 
 如果这个命令失败、没有输出，或者被 alias / wrapper 改写成其他文本，先修复 `bw` 安装或调用方式，再重新执行 PKV。
 
-### 交互模式里 `BW_SESSION` 明明导出了，还是提示输入主密码
+### TUI 里 `BW_SESSION` 明明导出了，还是提示输入主密码
 
 先确认导出的 session 还有效：
 
@@ -698,11 +695,11 @@ bw --nointeraction --session "$BW_SESSION" list folders
 export BW_SESSION="$(bw unlock --raw)"
 ```
 
-然后再进交互模式：
+然后再进 TUI 或直接运行 CLI 命令：
 
 ```bash
 PKV_DEBUG=1 pkv
-pkv> dev env
+PKV_NO_TUI=1 pkv get dev env
 ```
 
 ### `pkv get <folder> note` 报文件冲突

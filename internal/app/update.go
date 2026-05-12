@@ -98,7 +98,7 @@ func Update(ctx context.Context, _ UpdateParams, r Reporter) (UpdateResult, erro
 
 func fetchLatestTag(ctx context.Context) (string, error) {
 	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubReleasesURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubReleasesURL, http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -130,7 +130,7 @@ func buildAssetName() string {
 }
 
 func downloadAsset(ctx context.Context, url, targetDir string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -163,7 +163,7 @@ func downloadAsset(ctx context.Context, url, targetDir string) (string, error) {
 }
 
 func fetchExpectedHash(ctx context.Context, checksumURL, assetName string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, http.NoBody)
 	if err != nil {
 		return "", err
 	}

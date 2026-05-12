@@ -1,294 +1,89 @@
-# PKV 项目发布准备完成
+# PKV 项目摘要
 
-## 📦 项目结构
+## 当前定位
 
-```
-pkv/
-├── .github/workflows/
-│   └── release.yml              # GitHub Actions 自动构建和发布
-├── cmd/
-│   ├── root.go                  # 根命令 & 版本管理
-│   ├── ssh.go                   # SSH 密钥部署命令
-│   ├── note.go                  # Note 管理命令 (list/add/remove/edit/sync/clean)
-│   ├── env.go                   # Env 管理命令 (list/add/remove/edit/deploy/clean)
-│   └── update.go                # 自更新命令
-├── internal/
-│   ├── bw/
-│   │   ├── client.go            # Bitwarden CLI 包装
-│   │   └── types/types.go       # 数据类型定义
-│   ├── securenote/
-│   │   ├── securenote.go        # Note/Env 共用逻辑 (Add, Edit, ResolveItem)
-│   │   └── editor.go            # $EDITOR 交互
-│   ├── ssh/
-│   │   ├── deployer.go          # SSH 部署逻辑
-│   │   ├── config.go            # ~/.ssh/config 管理
-│   │   └── known_hosts.go       # ~/.ssh/known_hosts 管理
-│   ├── note/
-│   │   └── syncer.go            # Note 文件同步
-│   ├── state/
-│   │   └── state.go             # 部署状态追踪 (~/.pkv/state.json)
-│   └── version/
-│       └── version.go           # 版本注入
-├── main.go                      # 程序入口
-├── go.mod                       # Go 模块定义
-├── Makefile                     # 构建脚本
-├── install.sh                   # 一键安装脚本
-├── README.md                    # 完整用户文档
-├── CHANGELOG.md                 # 变更日志
-├── CONTRIBUTING.md              # 贡献指南
-├── RELEASE_CHECKLIST.md         # 发布清单
-├── LICENSE                      # MIT 许可证
-└── .gitignore                   # Git 忽略规则
-```
+PKV 是一个围绕 Bitwarden Password Manager 组织的个人密钥与配置落地工具。它以 Bitwarden folder 为组织单位，把一个 folder 内的 SSH Key、`pkv.env` Secure Note 和普通 Secure Note 同步到本机或当前项目目录。
 
-## ✅ 已完成的工作
+## 入口模型
 
-### 核心功能
-- ✅ SSH 密钥自动部署 (`pkv ssh <folder>`)
-- ✅ SSH 配置自动生成 (支持 host:port 解析)
-- ✅ known_hosts 自动扫描
-- ✅ SSH 密钥精确清理 (`pkv ssh <folder> clean`)
-- ✅ Note 同步导出 (`pkv note <folder>`)
-- ✅ Note 管理命令 (`pkv note <folder> list/add/remove/edit`)
-- ✅ Note 精确清理 (`pkv note <folder> clean`)
-- ✅ Env 部署 (`pkv env <folder>`)
-- ✅ Env 管理命令 (`pkv env <folder> list/add/remove/edit`)
-- ✅ Env 精确清理 (`pkv env <folder> clean`)
-- ✅ 编辑器支持 ($EDITOR，支持 vi/vim/code/nano 等)
-- ✅ 自更新功能 (`pkv update`)
-- ✅ 版本管理
+PKV 现在采用 TUI + CLI 双入口：
 
-### 工程化
-- ✅ 脱敏审计完成（无硬编码凭证）
-- ✅ GitHub Actions 自动化构建流程
-- ✅ 跨平台交叉编译（4 个平台）
-- ✅ 一键安装脚本（支持自动 PATH 配置）
-- ✅ SHA256 校验和生成
-- ✅ 全面的单元测试（36+ 测试用例，覆盖 securenote、state、bw 核心模块）
-- ✅ 无 Mock 框架设计（直接构造测试数据，遵循项目既有模式）
+- `pkv`：在交互式终端中默认进入 TUI
+- `pkv tui`：显式启动 TUI
+- `pkv <command>`：直接执行 CLI 命令，适合脚本和自动化
+- `PKV_NO_TUI=1 pkv ...`：强制禁用默认 TUI
+- `TERM=dumb` 或任一 std fd 不是 TTY 时自动走 CLI
 
-### 文档
-- ✅ 完整 README（中文，含编辑器配置说明）
-- ✅ 快速开始指南
-- ✅ 命令参考（含新增 list/add/remove/edit 子命令）
-- ✅ 故障排除
-- ✅ 安全考虑说明
-- ✅ 贡献指南
-- ✅ 发布清单
-- ✅ 测试总结文档 (TEST_SUMMARY.md)
+旧 readline REPL、`pkv>` prompt 和 folder-first 简写/转译语法已经移除。
 
-### 安全
-- ✅ 无硬编码密钥或密码
-- ✅ 凭证仅在运行时获取
-- ✅ 文件权限正确设置 (0600/0644)
-- ✅ 使用标记注释隔离管理的配置
-- ✅ 状态文件只记录元数据
-
-## 🚀 发布步骤
-
-### 1. 初始化本地仓库
+## 主要 CLI 命令
 
 ```bash
-cd ~/workspace/PKV
-git init
-git add -A
-git commit -m "Initial commit: PKV v0.1.0
-
-- SSH key deployment from Bitwarden
-- Automatic ~/.ssh/config generation
-- SSH key cleanup with known_hosts management
-- Note synchronization
-- Self-update functionality
-- Cross-platform support (Linux, macOS, amd64, arm64)"
-```
-
-### 2. 创建 GitHub 仓库
-
-在 GitHub 创建新仓库：
-- 仓库名: `pkv`
-- 所有者: `shichao402`
-- 描述: "Personal Key Vault - SSH key and config manager from Bitwarden"
-- 公开仓库
-- 初始化时不创建任何文件（本地已有）
-
-### 3. 连接远程
-
-```bash
-git remote add origin https://github.com/shichao402/pkv.git
-git branch -M main
-git push -u origin main
-```
-
-### 4. 创建第一个 Release
-
-```bash
-git tag v0.1.0 -m "Initial release"
-git push origin v0.1.0
-```
-
-GitHub Actions 会自动：
-1. 检测 tag 推送
-2. 为 4 个平台交叉编译
-3. 生成 SHA256 校验和
-4. 创建 GitHub Release
-5. 上传所有二进制文件
-
-### 5. 验证发布
-
-访问 https://github.com/shichao402/pkv/releases，检查：
-- Release v0.1.0 是否已创建
-- 4 个二进制文件是否已上传
-- 4 个 .sha256 文件是否已上传
-
-## 📋 发布前最终检查
-
-```bash
-cd ~/workspace/PKV
-
-# 1. 编译检查
-make clean
-make build
-go vet ./...
-
-# 2. 命令验证
-./pkv --version
-./pkv ssh --help
-./pkv note --help
-./pkv update --help
-
-# 3. 脚本验证
-bash -n install.sh
-
-# 4. 交叉编译
-make release
-ls -lh dist/
-
-# 5. 仓库准备
-git status  # 应无未提交的文件（除 dist/）
-```
-
-## 🎯 用户使用流程
-
-### 首次安装
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/main/install.sh | bash
-# ✅ 自动下载最新版本并安装到 ~/.local/bin
-```
-
-### 首次使用
-
-```bash
-# 1. 准备 Bitwarden（创建 SSH Key Item）
-# 2. 部署 SSH 密钥
-pkv ssh LyraX
-# ✅ 输入主密码 + 二次验证
-# ✅ 自动扫描 known_hosts
-# ✅ 完成
-
-# 3. 直接使用 SSH
-ssh github.com
-```
-
-### 自更新
-
-```bash
+pkv list [folder]
+pkv get <folder> <ssh|env|note|all>
+pkv add <folder> <ssh|env|note>
+pkv edit <folder> <env|note> [name-or-id]
+pkv remove <folder> <ssh|env|note> [id...]
+pkv clean <folder> <ssh|env|note>
+pkv unlock
 pkv update
-# ✅ 检查最新版本
-# ✅ 自动下载并替换
 ```
 
-## 📊 性能指标
+## TUI 能力
 
-- 构建时间: ~5 秒（本地编译）
-- 安装大小: ~8MB（单个二进制）
-- 启动时间: <100ms
-- 初次部署时间: ~10-30 秒（取决于 Bitwarden vault 大小和网络）
+TUI 支持：
 
-## 🔐 安全检查清单
+- 浏览 Bitwarden folders
+- 查看 folder 下的 SSH / Env / Notes 资源
+- 添加 SSH key
+- 编辑 env 或 note
+- 删除远端资源前确认
+- 清理本地产物前确认
+- 解锁 Bitwarden vault
+- 刷新资源列表
 
-- ✅ 无硬编码密钥、密码、token
-- ✅ 无个人信息（邮箱、用户名）
-- ✅ 无 API key 或认证凭证
-- ✅ Bitwarden 密钥只在运行时加载
-- ✅ 文件权限正确（0600 for secrets）
-- ✅ 所有依赖都来自官方可信源
-- ✅ 代码已审计，符合发布标准
+## 数据模型
 
-## 📝 后续维护计划
+- SSH：使用 Bitwarden 原生 SSH Key item，本地部署到 `~/.ssh/pkv_*` 并维护 `~/.ssh/config` 的 PKV 管理区块
+- Env：folder 内保留名 `pkv.env` 的 Secure Note，生成 `~/.pkv/env/<folder>.json|.sh|.ps1`
+- Note：除 `pkv.env` 之外的 Secure Note，按 note 名称同步到当前目录，支持相对路径并拒绝绝对路径或 `..` 逃逸
+- Include：`pkv.include` 可让一个 folder 引用其他 folder 的 env/note 默认值；当前 folder 胜出，ssh 与写操作不展开 include
 
-### 版本管理
-- 使用语义化版本 (SemVer)
-- 更新 CHANGELOG.md
-- 标签推送自动触发 Actions
+## 架构概览
 
-### 更新流程
-1. 开发特性或修复
-2. 更新 CHANGELOG.md
-3. 创建 tag 和 release
-4. 用户运行 `pkv update` 自动更新
+- `cmd/`：cobra CLI 入口、entry-mode 路由、CLI 参数适配
+- `internal/tui/`：Bubbletea TUI 顶层 model、视图、交互流程
+- `internal/app/`：CLI 与 TUI 共享的能力层和 Reporter 接口
+- `internal/bw/`：Bitwarden CLI 封装
+- `internal/key/`：SSH key 解析、生成与转换
+- `internal/env/`：env 产物生成
+- `internal/note/`：note 同步与冲突保护
+- `internal/state/`：部署状态追踪
+- `internal/version/`：构建时版本注入
 
-## 🏗 架构决策记录
+## 发布流程
 
-### Bitwarden CLI vs SDK 分析 (2026-03)
+版本号唯一来源是 `version.json`，值不带 `v` 前缀。
 
-#### 现状：PKV 完全依赖 Bitwarden CLI (`bw`)
+常规发布流程：
 
-PKV 通过 `internal/bw/client.go` 封装 `bw` CLI，涉及以下命令：
+1. 更新 `version.json`
+2. 更新 `CHANGELOG.md`
+3. 提交版本变更，例如 `chore(release): bump version to v1.0.0`
+4. 推送 `main`
+5. CI 读取 `version.json`，自动创建 `vX.Y.Z` tag 和 GitHub Release
 
-| 命令 | 用途 |
-|------|------|
-| `bw status` | 检查认证/锁定状态 |
-| `bw login` | 交互式登录 |
-| `bw unlock --raw` | 获取会话令牌 |
-| `bw sync` | 同步保险库数据 |
-| `bw list folders --search` | 查找文件夹 |
-| `bw list items --folderid` | 获取文件夹内项目 |
-| `bw create item` | 创建 SSH 密钥项 |
+不要手动创建或推送 release tag；这会让 CI 误判 tag 已存在并跳过发布构建。
 
-#### 决策：保持 CLI 方案，不接入 SDK
+## 验证建议
 
-**原因：**
+发布前至少运行：
 
-1. **功能不匹配** — Bitwarden Go SDK (`github.com/bitwarden/sdk-go`) 仅支持 Secrets Manager，不支持 Password Manager。PKV 依赖的 SSH Key (type=5)、Secure Note (type=2)、Folder 操作在 SDK 中均不存在。
-2. **许可证风险** — Bitwarden SDK 采用专有许可证（2024年10月更改），限制用于 Bitwarden 产品之外的模块，PKV 使用可能违反条款。
-3. **编译复杂性** — SDK 依赖 CGO 和 C 编译环境，会显著增加跨平台编译难度，且引入 Rust FFI 依赖链。
-4. **CLI 是官方标准接口** — Bitwarden 未提供 Password Manager 的公开 SDK，CLI 是唯一稳定且开源的个人密码库接口。
+```bash
+go test ./...
+go build ./...
+go vet ./...
+PKV_NO_TUI=1 go run . --version
+```
 
-#### 改进方向（在 CLI 框架内优化）
-
-**1. 改进 CLI 进程管理**
-- 添加 `bw` CLI 版本检查，验证最低兼容版本
-- 增强错误消息，针对常见故障（网络超时、会话过期、CLI 版本不兼容）提供具体排查指引
-- 考虑检测 `bw` CLI 响应格式变化，提前发现兼容性问题
-
-**2. 会话优化**
-- 缓存 `bw sync` 结果，减少重复网络调用（同一会话内多次操作时复用）
-- 支持会话令牌复用：跨多条 `pkv` 命令共享 `BW_SESSION`，避免用户反复输入主密码
-- 考虑引入会话超时检测，在令牌失效前主动刷新
-
-**3. 离线模式支持**
-- 支持从上次 `bw sync` 的本地缓存数据中读取（`bw` CLI 本身有本地数据）
-- 在无网络时降级为只读模式，允许查看已部署的密钥状态
-- 实现延迟同步策略：先使用本地数据完成操作，有网络时再同步验证
-
-## 🎉 项目完成状态
-
-| 组件 | 状态 |
-|------|------|
-| 核心功能 | ✅ 完成 |
-| 自动化构建 | ✅ 完成 |
-| 跨平台支持 | ✅ 完成 |
-| 文档 | ✅ 完成 |
-| 脱敏审计 | ✅ 完成 |
-| 安全检查 | ✅ 完成 |
-| 发布准备 | ✅ 完成 |
-
-**项目已准备好发布到 GitHub！🚀**
-
----
-
-## 联系方式
-
-- GitHub: https://github.com/shichao402/pkv
-- Issues: https://github.com/shichao402/pkv/issues
+涉及 TUI 的变更还应手动运行 `go run .` 验证交互式入口。涉及核心 Bitwarden 行为的变更应在个人 vault 上手动覆盖 `list` / `get` / `add` / `edit` / `remove` / `unlock` 主路径。
