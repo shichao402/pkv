@@ -2,8 +2,76 @@ package cmd
 
 import (
 	"net"
+	"strings"
 	"testing"
 )
+
+func TestBuildAddSSHKeyParamsGeneratesWhenPrivatePathMissing(t *testing.T) {
+	withAddSSHFlags(t, func() {
+		addNameFlag = "generated-key"
+		params, err := buildAddSSHKeyParams("prod")
+		if err != nil {
+			t.Fatalf("buildAddSSHKeyParams: %v", err)
+		}
+		if !params.Generated {
+			t.Fatal("Generated = false, want true")
+		}
+		if params.KeyName != "generated-key" {
+			t.Fatalf("KeyName = %q, want generated-key", params.KeyName)
+		}
+		if !strings.Contains(params.OpenSSHKey, "OPENSSH PRIVATE KEY") {
+			t.Fatal("OpenSSHKey missing OpenSSH private key")
+		}
+		if !strings.HasPrefix(params.PublicKey, "ssh-ed25519 ") {
+			t.Fatalf("PublicKey = %q, want ssh-ed25519 key", params.PublicKey)
+		}
+		if len(params.Hosts) != 0 {
+			t.Fatalf("Hosts = %v, want empty", params.Hosts)
+		}
+	})
+}
+
+func TestBuildAddSSHKeyParamsRejectsPublicKeyWithoutPrivatePath(t *testing.T) {
+	withAddSSHFlags(t, func() {
+		addNameFlag = "generated-key"
+		addSSHPubFlag = "ssh-ed25519 AAAA..."
+		_, err := buildAddSSHKeyParams("prod")
+		if err == nil || !strings.Contains(err.Error(), "--pub requires --priv") {
+			t.Fatalf("error = %v, want --pub requires --priv", err)
+		}
+	})
+}
+
+func withAddSSHFlags(t *testing.T, fn func()) {
+	t.Helper()
+	oldPriv := addSSHPrivFlag
+	oldPub := addSSHPubFlag
+	oldName := addNameFlag
+	oldGenerate := addSSHGenerateFlag
+	oldType := addSSHTypeFlag
+	oldBits := addSSHBitsFlag
+	oldComment := addSSHCommentFlag
+	oldHosts := append([]string(nil), addSSHHostsFlag...)
+	defer func() {
+		addSSHPrivFlag = oldPriv
+		addSSHPubFlag = oldPub
+		addNameFlag = oldName
+		addSSHGenerateFlag = oldGenerate
+		addSSHTypeFlag = oldType
+		addSSHBitsFlag = oldBits
+		addSSHCommentFlag = oldComment
+		addSSHHostsFlag = oldHosts
+	}()
+	addSSHPrivFlag = ""
+	addSSHPubFlag = ""
+	addNameFlag = ""
+	addSSHGenerateFlag = false
+	addSSHTypeFlag = "ed25519"
+	addSSHBitsFlag = 4096
+	addSSHCommentFlag = "test@host"
+	addSSHHostsFlag = nil
+	fn()
+}
 
 func TestIsPrivateIPv4(t *testing.T) {
 	tests := []struct {

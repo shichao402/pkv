@@ -149,6 +149,57 @@ func TestOpenEditor(t *testing.T) {
 	})
 }
 
+func TestResolveEditor(t *testing.T) {
+	lookPath := func(name string) (string, error) {
+		if name == "vim" {
+			return "/usr/bin/vim", nil
+		}
+		return "", os.ErrNotExist
+	}
+
+	t.Run("prefers VISUAL", func(t *testing.T) {
+		getenv := func(key string) string {
+			if key == "VISUAL" {
+				return "code --wait"
+			}
+			if key == "EDITOR" {
+				return "nano"
+			}
+			return ""
+		}
+		if got := resolveEditor(getenv, lookPath, "darwin"); got != "code --wait" {
+			t.Fatalf("resolveEditor = %q, want code --wait", got)
+		}
+	})
+
+	t.Run("uses EDITOR when VISUAL is empty", func(t *testing.T) {
+		getenv := func(key string) string {
+			if key == "EDITOR" {
+				return "nano"
+			}
+			return ""
+		}
+		if got := resolveEditor(getenv, lookPath, "darwin"); got != "nano" {
+			t.Fatalf("resolveEditor = %q, want nano", got)
+		}
+	})
+
+	t.Run("falls back to vim before vi", func(t *testing.T) {
+		getenv := func(string) string { return "" }
+		if got := resolveEditor(getenv, lookPath, "darwin"); got != "vim" {
+			t.Fatalf("resolveEditor = %q, want vim", got)
+		}
+	})
+
+	t.Run("falls back to vi when vim is unavailable", func(t *testing.T) {
+		getenv := func(string) string { return "" }
+		missing := func(string) (string, error) { return "", os.ErrNotExist }
+		if got := resolveEditor(getenv, missing, "linux"); got != "vi" {
+			t.Fatalf("resolveEditor = %q, want vi", got)
+		}
+	})
+}
+
 func TestEditorCommandParsing(t *testing.T) {
 	// This test verifies that editor commands with args are parsed correctly
 	tests := []struct {

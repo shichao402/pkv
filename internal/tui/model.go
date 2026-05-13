@@ -98,6 +98,7 @@ type sshWizardState struct {
 	openSSHKey   string
 	derivedPub   string
 	fingerprint  string
+	generated    bool
 	err          string
 }
 
@@ -181,6 +182,24 @@ func (unlockExecCommand) SetStdin(io.Reader)  {}
 func (unlockExecCommand) SetStdout(io.Writer) {}
 func (unlockExecCommand) SetStderr(io.Writer) {}
 
+type editorExecCommand struct {
+	initialContent string
+	content        string
+}
+
+func (c *editorExecCommand) Run() error {
+	content, err := securenote.OpenEditor(c.initialContent)
+	if err != nil {
+		return err
+	}
+	c.content = content
+	return nil
+}
+
+func (*editorExecCommand) SetStdin(io.Reader)  {}
+func (*editorExecCommand) SetStdout(io.Writer) {}
+func (*editorExecCommand) SetStderr(io.Writer) {}
+
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadVaultCmd(m.activeLoadID), m.reporter.waitStatus())
 }
@@ -245,6 +264,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadVaultCmd(requestID)
 		}
 		return m, nil
+	case editorFinishedMsg:
+		m.loading = false
+		m.err = msg.err
+		if msg.err != nil {
+			m.status = fmt.Sprintf("editor: %v", msg.err)
+			return m, nil
+		}
+		if msg.content == msg.state.item.Notes {
+			m.status = "No changes made."
+			return m, nil
+		}
+		m.invalidateLoads()
+		m.loading = true
+		m.err = nil
+		m.status = "Saving..."
+		return m, m.saveEditCmd(msg.state, msg.content)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	default:
@@ -367,9 +402,8 @@ func (m Model) cleanCmd(state confirmState) tea.Cmd {
 	}
 }
 
-func (m Model) saveEditCmd(state editState) tea.Cmd {
+func (m Model) saveEditCmd(state editState, content string) tea.Cmd {
 	folder := m.folderName()
-	content := state.content.Value()
 	return func() tea.Msg {
 		switch state.tab {
 		case tabEnv:
@@ -406,6 +440,7 @@ func (m Model) saveSSHWizardCmd(state sshWizardState) tea.Cmd {
 			OpenSSHKey:  state.openSSHKey,
 			PublicKey:   publicKey,
 			Fingerprint: state.fingerprint,
+			Generated:   state.generated,
 		}, m.reporter)
 		if err != nil {
 			return operationResultMsg{err: err}
@@ -469,7 +504,7 @@ func (m Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Saving..."
 		state := m.edit
 		m.interaction = interactionNone
-		return m, m.saveEditCmd(state)
+		return m, m.saveEditCmd(state, state.content.Value())
 	}
 	m.edit.content = m.edit.content.Update(msg)
 	return m, nil
@@ -517,7 +552,7 @@ func (m Model) advanceSSHWizard() (tea.Model, tea.Cmd) {
 	m.sshWizard.err = ""
 	switch m.sshWizard.step {
 	case sshStepPrivatePath:
-		privatePath, openSSHKey, publicKey, fingerprint, err := parsePrivateKeyPath(m.sshWizard.privateInput.Value())
+		privatePath, openSSHKey, publicKey, fingerprint, generated, err := resolveSSHWizardKey(m.sshWizard.privateInput.Value())
 		if err != nil {
 			m.sshWizard.err = err.Error()
 			return m, nil
@@ -526,6 +561,7 @@ func (m Model) advanceSSHWizard() (tea.Model, tea.Cmd) {
 		m.sshWizard.openSSHKey = openSSHKey
 		m.sshWizard.derivedPub = publicKey
 		m.sshWizard.fingerprint = fingerprint
+		m.sshWizard.generated = generated
 		if strings.TrimSpace(m.sshWizard.publicInput.Value()) == "" {
 			m.sshWizard.publicInput.SetValue(publicKey)
 		}
@@ -570,12 +606,18 @@ func (m Model) startEdit() (tea.Model, tea.Cmd) {
 		m.status = "No item selected."
 		return m, nil
 	}
-	buffer := newTextBuffer(item.Notes)
-	m.edit = editState{tab: m.tab, item: item, content: buffer}
-	m.interaction = interactionEdit
-	m.resizeInputs()
-	m.status = fmt.Sprintf("Editing %s.", item.Name)
-	return m, nil
+	state := editState{tab: m.tab, item: item, content: newTextBuffer(item.Notes)}
+	m.edit = state
+	m.interaction = interactionNone
+	m.status = fmt.Sprintf("Opening editor for %s.", item.Name)
+	return m, openEditorCmd(state)
+}
+
+func openEditorCmd(state editState) tea.Cmd {
+	editor := &editorExecCommand{initialContent: state.item.Notes}
+	return tea.Exec(editor, func(err error) tea.Msg {
+		return editorFinishedMsg{state: state, content: editor.content, err: err}
+	})
 }
 
 func (m Model) startRemoveConfirm() (tea.Model, tea.Cmd) {
@@ -894,6 +936,31 @@ func newSSHWizardState() sshWizardState {
 		publicInput:  publicInput,
 		nameInput:    nameInput,
 	}
+}
+
+func resolveSSHWizardKey(value string) (expandedPath, openSSHKey, publicKey, fingerprint string, generated bool, err error) {
+	privatePath := strings.TrimSpace(value)
+	if privatePath == "" {
+		openSSHKey, publicKey, fingerprint, err = pkvkey.GenerateKeypair(pkvkey.AlgoEd25519, 4096, defaultGeneratedKeyComment())
+		if err != nil {
+			return "", "", "", "", false, fmt.Errorf("generate keypair: %w", err)
+		}
+		return "", openSSHKey, publicKey, fingerprint, true, nil
+	}
+	expandedPath, openSSHKey, publicKey, fingerprint, err = parsePrivateKeyPath(privatePath)
+	return expandedPath, openSSHKey, publicKey, fingerprint, false, err
+}
+
+func defaultGeneratedKeyComment() string {
+	u := os.Getenv("USER")
+	if u == "" {
+		u = "user"
+	}
+	h, _ := os.Hostname()
+	if h == "" {
+		h = "host"
+	}
+	return fmt.Sprintf("%s@%s (pkv)", u, h)
 }
 
 func parsePrivateKeyPath(value string) (expandedPath, openSSHKey, publicKey, fingerprint string, err error) {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -127,18 +128,18 @@ func buildAddSSHKeyParams(folder string) (app.AddSSHKeyParams, error) {
 		generated   bool
 	)
 
-	if addSSHGenerateFlag {
+	if addSSHGenerateFlag || cfg.PrivatePath == "" {
 		generated = true
-		if addSSHPrivFlag != "" || addSSHPubFlag != "" {
-			return app.AddSSHKeyParams{}, fmt.Errorf("--generate cannot be combined with --priv/--pub")
+		if addSSHGenerateFlag && addSSHPrivFlag != "" {
+			return app.AddSSHKeyParams{}, fmt.Errorf("--generate cannot be combined with --priv")
 		}
-		if cfg.KeyName == "" {
-			return app.AddSSHKeyParams{}, fmt.Errorf("--name is required with --generate")
+		if addSSHPubFlag != "" {
+			return app.AddSSHKeyParams{}, fmt.Errorf("--pub requires --priv")
+		}
+		if err := ensureSSHKeyName(cfg); err != nil {
+			return app.AddSSHKeyParams{}, err
 		}
 		hosts = trimHosts(addSSHHostsFlag)
-		if len(hosts) == 0 {
-			return app.AddSSHKeyParams{}, fmt.Errorf("--host is required with --generate (e.g. --host my-server.example.com or --host 1.2.3.4:36000)")
-		}
 		comment := addSSHCommentFlag
 		if comment == "" {
 			comment = defaultKeyComment()
@@ -336,6 +337,23 @@ func readNoteContent(fileFlag, openEditorMessage string) (string, error) {
 		return "", fmt.Errorf("editor: %w", err)
 	}
 	return edited, nil
+}
+
+func ensureSSHKeyName(cfg *key.InputConfig) error {
+	reader := bufio.NewReader(os.Stdin)
+	for strings.TrimSpace(cfg.KeyName) == "" {
+		fmt.Print("Enter key name (e.g., my-server-key): ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("read key name failed: %w", err)
+		}
+		cfg.KeyName = strings.TrimSpace(input)
+		if cfg.KeyName == "" {
+			fmt.Println("Key name cannot be empty")
+		}
+	}
+	cfg.KeyName = strings.TrimSpace(cfg.KeyName)
+	return nil
 }
 
 func defaultKeyComment() string {

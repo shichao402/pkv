@@ -264,7 +264,7 @@ func renderSSHWizard(m Model) string {
 	}
 	switch m.sshWizard.step {
 	case sshStepPrivatePath:
-		b.WriteString("Private key path\n")
+		b.WriteString("Private key path (leave empty to generate a new key)\n")
 		b.WriteString(m.sshWizard.privateInput.View())
 		b.WriteString("\n\n")
 		b.WriteString(subtleStyle.Render("enter next · esc cancel"))
@@ -283,9 +283,13 @@ func renderSSHWizard(m Model) string {
 		if publicKey == "" {
 			publicKey = m.sshWizard.derivedPub
 		}
+		privateKey := displayPath(m.sshWizard.privateInput.Value())
+		if m.sshWizard.generated {
+			privateKey = "generated in memory"
+		}
 		b.WriteString("Summary\n\n")
 		fmt.Fprintf(&b, "Key name:    %s\n", strings.TrimSpace(m.sshWizard.nameInput.Value()))
-		fmt.Fprintf(&b, "Private key: %s\n", displayPath(m.sshWizard.privateInput.Value()))
+		fmt.Fprintf(&b, "Private key: %s\n", privateKey)
 		fmt.Fprintf(&b, "Fingerprint: %s\n", m.sshWizard.fingerprint)
 		fmt.Fprintf(&b, "Public key:  %s\n", truncate(publicKey, 72))
 		b.WriteString("\n")

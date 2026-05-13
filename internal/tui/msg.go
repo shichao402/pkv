@@ -26,3 +26,9 @@ type operationResultMsg struct {
 	reload  bool
 	err     error
 }
+
+type editorFinishedMsg struct {
+	state   editState
+	content string
+	err     error
+}

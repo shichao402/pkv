@@ -207,14 +207,57 @@ func TestEditEnvCanStartWithoutExistingEnv(t *testing.T) {
 
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatal("edit env cmd = non-nil, want edit state only")
+	if cmd == nil {
+		t.Fatal("edit env cmd = nil, want external editor command")
 	}
-	if got.interaction != interactionEdit {
-		t.Fatalf("interaction = %v, want edit", got.interaction)
+	if got.interaction != interactionNone {
+		t.Fatalf("interaction = %v, want none while external editor opens", got.interaction)
 	}
 	if got.edit.item.Name != bwtypes.ReservedEnvNoteName {
 		t.Fatalf("edit item = %q, want reserved env note", got.edit.item.Name)
+	}
+}
+
+func TestEditorFinishedWithChangesReturnsSaveCommand(t *testing.T) {
+	model := readyModel()
+	state := editState{tab: tabEnv, item: *model.resources.EnvNote, content: newTextBuffer(model.resources.EnvNote.Notes)}
+
+	updated, cmd := model.Update(editorFinishedMsg{state: state, content: "API_TOKEN=changed"})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("editor finished cmd = nil, want save command")
+	}
+	if !got.loading {
+		t.Fatal("loading = false, want true while save runs")
+	}
+	if got.status != "Saving..." {
+		t.Fatalf("status = %q, want Saving...", got.status)
+	}
+}
+
+func TestSSHWizardBlankPrivatePathGeneratesKey(t *testing.T) {
+	model := readyModel()
+	model.tab = tabSSH
+	model.focus = focusResources
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	model = updated.(Model)
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("enter cmd = non-nil, want local wizard transition")
+	}
+	if got.sshWizard.step != sshStepPublicKey {
+		t.Fatalf("step = %v, want public key", got.sshWizard.step)
+	}
+	if !got.sshWizard.generated {
+		t.Fatal("generated = false, want true")
+	}
+	if !strings.Contains(got.sshWizard.openSSHKey, "OPENSSH PRIVATE KEY") {
+		t.Fatal("openSSHKey missing OpenSSH private key")
+	}
+	if !strings.HasPrefix(got.sshWizard.derivedPub, "ssh-ed25519 ") {
+		t.Fatalf("derivedPub = %q, want ssh-ed25519 key", got.sshWizard.derivedPub)
 	}
 }
 
