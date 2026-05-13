@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -140,12 +141,38 @@ func NewModel(ctx context.Context) Model {
 }
 
 func Run(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := runInteractiveUnlock(ctx, app.TextReporter{Out: os.Stderr, Err: os.Stderr}); err != nil {
+		return fmt.Errorf("tui authentication failed: %w", err)
+	}
+
 	_, err := tea.NewProgram(NewModel(ctx), tea.WithAltScreen()).Run()
 	if err != nil {
 		return fmt.Errorf("tui failed: %w", err)
 	}
 	return nil
 }
+
+func runInteractiveUnlock(ctx context.Context, reporter app.Reporter) error {
+	_, _ = fmt.Fprintln(os.Stderr, "Checking Bitwarden unlock state. If bw asks for your master password, input is hidden; type it and press Enter.")
+	_, err := app.Unlock(ctx, app.UnlockParams{}, reporter)
+	return err
+}
+
+type unlockExecCommand struct {
+	ctx      context.Context
+	reporter app.Reporter
+}
+
+func (c unlockExecCommand) Run() error {
+	return runInteractiveUnlock(c.ctx, c.reporter)
+}
+
+func (unlockExecCommand) SetStdin(io.Reader)  {}
+func (unlockExecCommand) SetStdout(io.Writer) {}
+func (unlockExecCommand) SetStderr(io.Writer) {}
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.loadFoldersCmd(), m.reporter.waitStatus())
@@ -306,13 +333,12 @@ func (m Model) loadResourcesCmd(folder bwtypes.Folder) tea.Cmd {
 }
 
 func (m Model) unlockCmd() tea.Cmd {
-	return func() tea.Msg {
-		_, err := app.Unlock(m.ctx, app.UnlockParams{}, m.reporter)
+	return tea.Exec(unlockExecCommand{ctx: m.ctx, reporter: m.reporter}, func(err error) tea.Msg {
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
 		return operationResultMsg{message: "Vault unlocked.", reload: true}
-	}
+	})
 }
 
 func (m Model) removeCmd(state confirmState) tea.Cmd {
