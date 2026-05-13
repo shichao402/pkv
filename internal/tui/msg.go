@@ -1,9 +1,6 @@
 package tui
 
-import (
-	"github.com/shichao402/pkv/internal/app"
-	bwtypes "github.com/shichao402/pkv/internal/bw/types"
-)
+import "github.com/shichao402/pkv/internal/app"
 
 type statusLevel int
 
@@ -18,13 +15,9 @@ type statusMsg struct {
 	message string
 }
 
-type foldersLoadedMsg struct {
-	folders []bwtypes.Folder
-	err     error
-}
-
-type resourcesLoadedMsg struct {
-	resources app.BrowseResources
+type vaultLoadedMsg struct {
+	requestID uint64
+	snapshot  app.BrowseSnapshot
 	err       error
 }
 

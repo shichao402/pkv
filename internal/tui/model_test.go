@@ -11,19 +11,84 @@ import (
 	bwtypes "github.com/shichao402/pkv/internal/bw/types"
 )
 
-func TestUpdateFoldersLoadedSelectsFirstFolder(t *testing.T) {
+func TestUpdateVaultLoadedSelectsFirstFolder(t *testing.T) {
 	model := NewModel(t.Context())
-	updated, cmd := model.Update(foldersLoadedMsg{folders: []bwtypes.Folder{{ID: "folder-1", Name: "prod"}}})
+	snapshot := app.BrowseSnapshot{
+		Folders: []bwtypes.Folder{{ID: "folder-1", Name: "prod"}},
+		ResourcesByFolderID: map[string]app.BrowseResources{
+			"folder-1": {
+				Folder:  bwtypes.Folder{ID: "folder-1", Name: "prod"},
+				SSHKeys: []bwtypes.Item{{ID: "ssh-1", Type: bwtypes.ItemTypeSSHKey, Name: "deploy"}},
+			},
+		},
+		ItemCount: 1,
+	}
+
+	updated, cmd := model.Update(vaultLoadedMsg{requestID: model.activeLoadID, snapshot: snapshot})
 	got := updated.(Model)
 
-	if got.loading != true {
-		t.Fatal("loading = false, want true while folder resources load")
+	if got.loading {
+		t.Fatal("loading = true, want false after vault snapshot loads")
 	}
 	if got.currentFolder == nil || got.currentFolder.Name != "prod" {
 		t.Fatalf("currentFolder = %+v, want prod", got.currentFolder)
 	}
-	if cmd == nil {
-		t.Fatal("cmd = nil, want resource load command")
+	if len(got.resources.SSHKeys) != 1 || got.resources.SSHKeys[0].ID != "ssh-1" {
+		t.Fatalf("SSHKeys = %+v, want ssh-1", got.resources.SSHKeys)
+	}
+	if cmd != nil {
+		t.Fatal("cmd != nil, want no follow-up resource load")
+	}
+}
+
+func TestFolderSelectionUsesCachedResources(t *testing.T) {
+	model := readyModel()
+	model.focus = focusFolders
+	model.folders = []bwtypes.Folder{
+		{ID: "folder-1", Name: "prod"},
+		{ID: "folder-2", Name: "ssh"},
+	}
+	model.resourcesByFolderID = map[string]app.BrowseResources{
+		"folder-1": model.resources,
+		"folder-2": {
+			Folder:  bwtypes.Folder{ID: "folder-2", Name: "ssh"},
+			SSHKeys: []bwtypes.Item{{ID: "ssh-2", Type: bwtypes.ItemTypeSSHKey, Name: "admin"}},
+		},
+	}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("down key cmd != nil, want cached local selection only")
+	}
+	if got.currentFolder == nil || got.currentFolder.Name != "ssh" {
+		t.Fatalf("currentFolder = %+v, want ssh", got.currentFolder)
+	}
+	if len(got.resources.SSHKeys) != 1 || got.resources.SSHKeys[0].ID != "ssh-2" {
+		t.Fatalf("SSHKeys = %+v, want ssh-2", got.resources.SSHKeys)
+	}
+}
+
+func TestStaleVaultLoadedMessageIsIgnored(t *testing.T) {
+	model := readyModel()
+	model.activeLoadID = 2
+	model.loadSeq = 2
+	oldFolder := model.currentFolder.Name
+
+	updated, cmd := model.Update(vaultLoadedMsg{
+		requestID: 1,
+		snapshot: app.BrowseSnapshot{
+			Folders: []bwtypes.Folder{{ID: "old", Name: "old"}},
+		},
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("cmd != nil, want stale load ignored")
+	}
+	if got.currentFolder == nil || got.currentFolder.Name != oldFolder {
+		t.Fatalf("currentFolder = %+v, want unchanged %q", got.currentFolder, oldFolder)
 	}
 }
 
@@ -174,15 +239,37 @@ func TestSSHWizardStartsAndEscCancels(t *testing.T) {
 	}
 }
 
-func TestOperationResultReloadsCurrentFolder(t *testing.T) {
+func TestOperationResultReloadsVault(t *testing.T) {
 	model := readyModel()
+	oldLoadID := model.activeLoadID
+
 	updated, cmd := model.Update(operationResultMsg{message: "saved", reload: true})
 	got := updated.(Model)
 	if !got.loading {
-		t.Fatal("loading = false, want true while resources reload")
+		t.Fatal("loading = false, want true while vault reloads")
+	}
+	if got.activeLoadID == oldLoadID {
+		t.Fatalf("activeLoadID = %d, want a new load id", got.activeLoadID)
 	}
 	if cmd == nil {
-		t.Fatal("cmd = nil, want resource reload command")
+		t.Fatal("cmd = nil, want vault reload command")
+	}
+}
+
+func TestReloadKeyReloadsVault(t *testing.T) {
+	model := readyModel()
+	oldLoadID := model.activeLoadID
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	got := updated.(Model)
+	if !got.loading {
+		t.Fatal("loading = false, want true while vault reloads")
+	}
+	if got.activeLoadID == oldLoadID {
+		t.Fatalf("activeLoadID = %d, want a new load id", got.activeLoadID)
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want vault reload command")
 	}
 }
 
@@ -198,5 +285,6 @@ func readyModel() Model {
 		EnvNote: &bwtypes.Item{ID: "env-1", Type: bwtypes.ItemTypeSecureNote, Name: bwtypes.ReservedEnvNoteName, Notes: "API_TOKEN=secret"},
 		Notes:   []bwtypes.Item{{ID: "note-1", Type: bwtypes.ItemTypeSecureNote, Name: "app.conf", Notes: "debug=true"}},
 	}
+	model.resourcesByFolderID = map[string]app.BrowseResources{folder.ID: model.resources}
 	return model
 }

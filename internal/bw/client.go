@@ -147,6 +147,20 @@ func (c *Client) ListItems(session, folderID string) ([]types.Item, error) {
 	return items, nil
 }
 
+// ListAllItems returns all items in the vault.
+func (c *Client) ListAllItems(session string) ([]types.Item, error) {
+	out, err := c.run(session, "list", "items")
+	if err != nil {
+		return nil, err
+	}
+
+	var items []types.Item
+	if err := json.Unmarshal([]byte(out), &items); err != nil {
+		return nil, fmt.Errorf("failed to parse items: %w", err)
+	}
+	return items, nil
+}
+
 // DeleteItem deletes a Bitwarden item by ID.
 func (c *Client) DeleteItem(session, itemID string) error {
 	_, err := c.run(session, "delete", "item", itemID)

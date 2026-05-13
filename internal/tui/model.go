@@ -106,13 +106,14 @@ type Model struct {
 	reporter *Reporter
 	keys     keyMap
 
-	folders        []bwtypes.Folder
-	selectedFolder int
-	currentFolder  *bwtypes.Folder
-	resources      app.BrowseResources
-	selectedItem   map[resourceTab]int
-	tab            resourceTab
-	focus          focusMode
+	folders             []bwtypes.Folder
+	selectedFolder      int
+	currentFolder       *bwtypes.Folder
+	resources           app.BrowseResources
+	resourcesByFolderID map[string]app.BrowseResources
+	selectedItem        map[resourceTab]int
+	tab                 resourceTab
+	focus               focusMode
 
 	interaction interactionMode
 	confirm     confirmState
@@ -124,6 +125,9 @@ type Model struct {
 	err     error
 	width   int
 	height  int
+
+	loadSeq      uint64
+	activeLoadID uint64
 }
 
 func NewModel(ctx context.Context) Model {
@@ -131,12 +135,15 @@ func NewModel(ctx context.Context) Model {
 		ctx = context.Background()
 	}
 	return Model{
-		ctx:          ctx,
-		reporter:     NewReporter(),
-		keys:         defaultKeyMap(),
-		selectedItem: map[resourceTab]int{tabSSH: 0, tabEnv: 0, tabNotes: 0},
-		status:       "Loading folders...",
-		loading:      true,
+		ctx:                 ctx,
+		reporter:            NewReporter(),
+		keys:                defaultKeyMap(),
+		selectedItem:        map[resourceTab]int{tabSSH: 0, tabEnv: 0, tabNotes: 0},
+		resourcesByFolderID: map[string]app.BrowseResources{},
+		status:              "Loading vault...",
+		loading:             true,
+		loadSeq:             1,
+		activeLoadID:        1,
 	}
 }
 
@@ -175,7 +182,7 @@ func (unlockExecCommand) SetStdout(io.Writer) {}
 func (unlockExecCommand) SetStderr(io.Writer) {}
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadFoldersCmd(), m.reporter.waitStatus())
+	return tea.Batch(m.loadVaultCmd(m.activeLoadID), m.reporter.waitStatus())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -191,34 +198,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("%s", msg.message)
 		}
 		return m, m.reporter.waitStatus()
-	case foldersLoadedMsg:
+	case vaultLoadedMsg:
+		if msg.requestID != m.activeLoadID {
+			return m, nil
+		}
 		m.loading = false
-		m.folders = msg.folders
 		m.err = msg.err
 		if msg.err != nil {
 			m.status = msg.err.Error()
 			return m, nil
 		}
+
+		previousFolderID := ""
+		if m.currentFolder != nil {
+			previousFolderID = m.currentFolder.ID
+		}
+		m.folders = msg.snapshot.Folders
+		m.resourcesByFolderID = msg.snapshot.ResourcesByFolderID
+		if m.resourcesByFolderID == nil {
+			m.resourcesByFolderID = map[string]app.BrowseResources{}
+		}
 		if len(m.folders) == 0 {
+			m.currentFolder = nil
+			m.resources = app.BrowseResources{}
 			m.status = "No folders found."
 			return m, nil
 		}
-		m.status = fmt.Sprintf("Loaded %d folder(s).", len(m.folders))
-		folder := m.folders[m.selectedFolder]
-		m.currentFolder = &folder
-		m.loading = true
-		m.status = fmt.Sprintf("Loading %s...", folder.Name)
-		return m, m.loadResourcesCmd(folder)
-	case resourcesLoadedMsg:
-		m.loading = false
-		m.err = msg.err
-		if msg.err != nil {
-			m.status = msg.err.Error()
-			return m, nil
-		}
-		m.resources = msg.resources
-		m.status = fmt.Sprintf("Loaded %s: %d SSH, env %s, %d note(s).", m.resources.Folder.Name, len(m.resources.SSHKeys), yesNo(m.resources.EnvNote != nil), len(m.resources.Notes))
-		m.clampSelection()
+
+		m.selectedFolder = selectFolderIndex(m.folders, previousFolderID, m.selectedFolder)
+		m.applySelectedFolderFromCache()
+		m.status = fmt.Sprintf("Loaded %d folder(s), %d item(s). Selected %s: %d SSH, env %s, %d note(s).", len(m.folders), msg.snapshot.ItemCount, m.resources.Folder.Name, len(m.resources.SSHKeys), yesNo(m.resources.EnvNote != nil), len(m.resources.Notes))
 		return m, nil
 	case operationResultMsg:
 		m.loading = false
@@ -229,10 +238,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = msg.message
 		m.interaction = interactionNone
-		if msg.reload && m.currentFolder != nil {
-			folder := *m.currentFolder
+		if msg.reload {
 			m.loading = true
-			return m, m.loadResourcesCmd(folder)
+			m.status = msg.message + " Refreshing vault..."
+			requestID := m.beginLoad()
+			return m, m.loadVaultCmd(requestID)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -265,6 +275,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.unlock):
+		m.invalidateLoads()
 		m.loading = true
 		m.err = nil
 		m.status = "Authenticating with Bitwarden..."
@@ -272,12 +283,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.reload):
 		m.err = nil
 		m.loading = true
-		if m.focus == focusFolders || m.currentFolder == nil {
-			m.status = "Reloading folders..."
-			return m, m.loadFoldersCmd()
-		}
-		m.status = fmt.Sprintf("Reloading %s...", m.currentFolder.Name)
-		return m, m.loadResourcesCmd(*m.currentFolder)
+		m.status = "Refreshing vault..."
+		requestID := m.beginLoad()
+		return m, m.loadVaultCmd(requestID)
 	case key.Matches(msg, m.keys.add):
 		return m.startAdd()
 	case key.Matches(msg, m.keys.edit):
@@ -318,17 +326,10 @@ func (m Model) View() string {
 	return render(m)
 }
 
-func (m Model) loadFoldersCmd() tea.Cmd {
+func (m Model) loadVaultCmd(requestID uint64) tea.Cmd {
 	return func() tea.Msg {
-		folders, err := app.BrowseFolders(m.ctx, m.reporter)
-		return foldersLoadedMsg{folders: folders, err: err}
-	}
-}
-
-func (m Model) loadResourcesCmd(folder bwtypes.Folder) tea.Cmd {
-	return func() tea.Msg {
-		resources, err := app.BrowseFolderResources(m.ctx, folder, m.reporter)
-		return resourcesLoadedMsg{resources: resources, err: err}
+		snapshot, err := app.BrowseVaultSnapshot(m.ctx, m.reporter)
+		return vaultLoadedMsg{requestID: requestID, snapshot: snapshot, err: err}
 	}
 }
 
@@ -419,13 +420,11 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 		if len(m.folders) == 0 {
 			return *m, nil
 		}
-		folder := m.folders[m.selectedFolder]
-		m.currentFolder = &folder
+		m.applySelectedFolderFromCache()
 		m.focus = focusResources
-		m.loading = true
+		m.loading = false
 		m.err = nil
-		m.status = fmt.Sprintf("Loading %s...", folder.Name)
-		return *m, m.loadResourcesCmd(folder)
+		return *m, nil
 	case focusResources:
 		if len(m.currentItems()) > 0 || m.tab == tabEnv && m.resources.EnvNote != nil {
 			m.focus = focusDetail
@@ -439,6 +438,7 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y":
 		state := m.confirm
 		m.interaction = interactionNone
+		m.invalidateLoads()
 		m.loading = true
 		m.err = nil
 		if state.kind == confirmRemove {
@@ -463,6 +463,7 @@ func (m Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keys.save) {
+		m.invalidateLoads()
 		m.loading = true
 		m.err = nil
 		m.status = "Saving..."
@@ -485,6 +486,7 @@ func (m Model) handleSSHWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "y", "Y", "ctrl+s":
 			state := m.sshWizard
 			m.interaction = interactionNone
+			m.invalidateLoads()
 			m.loading = true
 			m.err = nil
 			m.status = "Creating SSH key..."
@@ -604,7 +606,12 @@ func (m Model) startCleanConfirm() (tea.Model, tea.Cmd) {
 
 func (m *Model) moveSelection(delta int) {
 	if m.focus == focusFolders {
+		if len(m.folders) == 0 {
+			return
+		}
 		m.selectedFolder = clamp(m.selectedFolder+delta, len(m.folders))
+		m.applySelectedFolderFromCache()
+		m.status = fmt.Sprintf("Selected %s: %d SSH, env %s, %d note(s).", m.resources.Folder.Name, len(m.resources.SSHKeys), yesNo(m.resources.EnvNote != nil), len(m.resources.Notes))
 		return
 	}
 	m.selectedItem[m.tab] = clamp(m.selectedItem[m.tab]+delta, len(m.currentItems()))
@@ -652,6 +659,49 @@ func (m *Model) currentItem() (bwtypes.Item, bool) {
 func (m *Model) clampSelection() {
 	m.selectedFolder = clamp(m.selectedFolder, len(m.folders))
 	m.selectedItem[m.tab] = clamp(m.selectedItem[m.tab], len(m.currentItems()))
+}
+
+func (m *Model) beginLoad() uint64 {
+	m.loadSeq++
+	m.activeLoadID = m.loadSeq
+	return m.activeLoadID
+}
+
+func (m *Model) invalidateLoads() {
+	m.loadSeq++
+	m.activeLoadID = m.loadSeq
+}
+
+func (m *Model) applySelectedFolderFromCache() {
+	if len(m.folders) == 0 {
+		m.currentFolder = nil
+		m.resources = app.BrowseResources{}
+		return
+	}
+
+	m.selectedFolder = clamp(m.selectedFolder, len(m.folders))
+	folder := m.folders[m.selectedFolder]
+	m.currentFolder = &folder
+	if resources, ok := m.resourcesByFolderID[folder.ID]; ok {
+		m.resources = resources
+	} else {
+		m.resources = app.BrowseResources{Folder: folder}
+	}
+	for tab := range m.selectedItem {
+		m.selectedItem[tab] = 0
+	}
+	m.clampSelection()
+}
+
+func selectFolderIndex(folders []bwtypes.Folder, previousID string, fallback int) int {
+	if previousID != "" {
+		for i, folder := range folders {
+			if folder.ID == previousID {
+				return i
+			}
+		}
+	}
+	return clamp(fallback, len(folders))
 }
 
 func (m *Model) resizeInputs() {
