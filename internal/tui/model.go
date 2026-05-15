@@ -48,6 +48,7 @@ type confirmKind int
 const (
 	confirmRemove confirmKind = iota
 	confirmClean
+	confirmGet
 )
 
 type sshWizardStep int
@@ -72,6 +73,7 @@ type keyMap struct {
 	edit   key.Binding
 	delete key.Binding
 	clean  key.Binding
+	get    key.Binding
 	unlock key.Binding
 	save   key.Binding
 	quit   key.Binding
@@ -329,6 +331,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startRemoveConfirm()
 	case key.Matches(msg, m.keys.clean):
 		return m.startCleanConfirm()
+	case key.Matches(msg, m.keys.get):
+		return m.startGetConfirm()
 	case key.Matches(msg, m.keys.up):
 		m.moveSelection(-1)
 		return m, nil
@@ -399,6 +403,18 @@ func (m Model) cleanCmd(state confirmState) tea.Cmd {
 			return operationResultMsg{err: err}
 		}
 		return operationResultMsg{message: fmt.Sprintf("Cleaned %d %s item(s).", result.Cleaned, kind), reload: true}
+	}
+}
+
+func (m Model) getCmd(state confirmState) tea.Cmd {
+	folder := m.folderName()
+	kind := tabKind(state.tab)
+	return func() tea.Msg {
+		result, err := app.Get(m.ctx, app.GetParams{Folder: folder, Kind: kind}, m.reporter)
+		if err != nil {
+			return operationResultMsg{err: err}
+		}
+		return operationResultMsg{message: getResultMessage(kind, result), reload: true}
 	}
 }
 
@@ -476,12 +492,17 @@ func (m Model) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateLoads()
 		m.loading = true
 		m.err = nil
-		if state.kind == confirmRemove {
+		switch state.kind {
+		case confirmRemove:
 			m.status = "Removing..."
 			return m, m.removeCmd(state)
+		case confirmGet:
+			m.status = "Getting..."
+			return m, m.getCmd(state)
+		default:
+			m.status = "Cleaning..."
+			return m, m.cleanCmd(state)
 		}
-		m.status = "Cleaning..."
-		return m, m.cleanCmd(state)
 	case "n", "N", "esc":
 		m.interaction = interactionNone
 		m.status = "Canceled."
@@ -643,6 +664,16 @@ func (m Model) startCleanConfirm() (tea.Model, tea.Cmd) {
 	m.confirm = confirmState{kind: confirmClean, tab: m.tab}
 	m.interaction = interactionConfirm
 	m.status = "Confirm clean."
+	return m, nil
+}
+
+func (m Model) startGetConfirm() (tea.Model, tea.Cmd) {
+	if m.currentFolder == nil {
+		return m, nil
+	}
+	m.confirm = confirmState{kind: confirmGet, tab: m.tab}
+	m.interaction = interactionConfirm
+	m.status = "Confirm get."
 	return m, nil
 }
 
@@ -915,6 +946,7 @@ func defaultKeyMap() keyMap {
 		edit:   key.NewBinding(key.WithKeys("e")),
 		delete: key.NewBinding(key.WithKeys("d")),
 		clean:  key.NewBinding(key.WithKeys("c")),
+		get:    key.NewBinding(key.WithKeys("g")),
 		unlock: key.NewBinding(key.WithKeys("u")),
 		save:   key.NewBinding(key.WithKeys("ctrl+s")),
 		quit:   key.NewBinding(key.WithKeys("q")),
@@ -1008,6 +1040,19 @@ func tabKind(tab resourceTab) string {
 		return "note"
 	default:
 		return ""
+	}
+}
+
+func getResultMessage(kind string, result app.GetResult) string {
+	switch kind {
+	case "ssh":
+		return fmt.Sprintf("Deployed %d SSH key(s).", result.SSHDeployed)
+	case "env":
+		return fmt.Sprintf("Wrote env artifacts with %d key(s).", result.EnvKeys)
+	case "note":
+		return fmt.Sprintf("Synced %d note(s).", result.NotesSynced)
+	default:
+		return "Get completed."
 	}
 }
 

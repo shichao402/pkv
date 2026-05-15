@@ -210,28 +210,37 @@ func renderDetail(m Model) string {
 func renderConfirm(m Model) string {
 	var b strings.Builder
 	kind := tabKind(m.confirm.tab)
-	var title string
+	title := "Confirm Clean"
 	verb := "clean local materialized resources for"
 	target := kind
-	if m.confirm.kind == confirmRemove {
+	warning := "This action changes local materialized files."
+	scope := localMaterializedScope(kind)
+
+	switch m.confirm.kind {
+	case confirmRemove:
 		verb = "remove"
 		target = m.confirm.item.Name
 		if target == "" {
 			target = shortID(m.confirm.item.ID)
 		}
 		title = "Confirm Remove"
-	} else {
-		title = "Confirm Clean"
+		warning = "This action changes Bitwarden and local materialized files."
+		scope = "Bitwarden item plus any tracked local materialized files"
+	case confirmGet:
+		title = "Confirm Get"
+		verb = "get local materialized resources for"
 	}
+
 	b.WriteString(focusedStyle.Render(title))
 	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "Folder: %s\n", m.folderName())
 	fmt.Fprintf(&b, "Action: %s %s\n", verb, target)
+	fmt.Fprintf(&b, "Local:  %s\n", scope)
 	if m.confirm.kind == confirmRemove && m.confirm.item.ID != "" {
 		fmt.Fprintf(&b, "ID:     %s\n", m.confirm.item.ID)
 	}
 	b.WriteString("\n")
-	b.WriteString(errorStyle.Render("This action changes Bitwarden or local materialized files."))
+	b.WriteString(errorStyle.Render(warning))
 	b.WriteString("\n\n")
 	b.WriteString(subtleStyle.Render("y confirm · n/esc cancel"))
 	return b.String()
@@ -308,29 +317,42 @@ func renderFooter(m Model) string {
 	} else if m.loading {
 		status = subtleStyle.Render(status)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, "", status, subtleStyle.Render("↑↓ navigate · enter select · tab/←→ switch · a add · e edit · d remove · c clean · u unlock · r reload · q quit"))
+	return lipgloss.JoinVertical(lipgloss.Left, "", status, subtleStyle.Render("↑↓ navigate · enter select · tab/←→ switch · g get · a add · e edit · d remove · c clean · u unlock · r reload · q quit"))
 }
 
 func renderResourceHints(m Model) string {
 	if m.tab == tabSSH {
-		return subtleStyle.Render("enter detail · a add ssh · d remove · c clean · tab switch · esc folders")
+		return subtleStyle.Render("enter detail · g get · a add ssh · d remove · c clean · tab switch · esc folders")
 	}
 	if m.tab == tabEnv {
-		return subtleStyle.Render("enter detail · e edit/create env · d remove · c clean · tab switch · esc folders")
+		return subtleStyle.Render("enter detail · g get · e edit/create env · d remove · c clean · tab switch · esc folders")
 	}
-	return subtleStyle.Render("enter detail · e edit note · d remove · c clean · tab switch · esc folders")
+	return subtleStyle.Render("enter detail · g get · e edit note · d remove · c clean · tab switch · esc folders")
 }
 
 func renderDetailHints(m Model) string {
 	switch m.tab {
 	case tabSSH:
-		return subtleStyle.Render("d remove · c clean · esc back · q quit")
+		return subtleStyle.Render("g get · d remove · c clean · esc back · q quit")
 	case tabEnv:
-		return subtleStyle.Render("e edit · d remove · c clean · esc back · q quit")
+		return subtleStyle.Render("g get · e edit · d remove · c clean · esc back · q quit")
 	case tabNotes:
-		return subtleStyle.Render("e edit · d remove · c clean · esc back · q quit")
+		return subtleStyle.Render("g get · e edit · d remove · c clean · esc back · q quit")
 	default:
 		return subtleStyle.Render("esc back · q quit")
+	}
+}
+
+func localMaterializedScope(kind string) string {
+	switch kind {
+	case "ssh":
+		return "~/.ssh key files and SSH config"
+	case "env":
+		return "~/.pkv/env env artifacts"
+	case "note":
+		return "current working directory note files"
+	default:
+		return "local materialized files"
 	}
 }
 

@@ -199,6 +199,63 @@ func TestConfirmRemoveReturnsOperationCommand(t *testing.T) {
 	}
 }
 
+func TestGetStartsConfirmationAndCancelStopsIt(t *testing.T) {
+	model := readyModel()
+	model.focus = focusResources
+	model.tab = tabEnv
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("get key cmd = non-nil, want confirmation only")
+	}
+	if got.interaction != interactionConfirm || got.confirm.kind != confirmGet {
+		t.Fatalf("interaction = %v/%v, want get confirmation", got.interaction, got.confirm.kind)
+	}
+	if got.confirm.tab != tabEnv {
+		t.Fatalf("confirm tab = %v, want env", got.confirm.tab)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatal("cancel cmd = non-nil, want no get command")
+	}
+	if got.interaction != interactionNone {
+		t.Fatalf("interaction = %v, want none", got.interaction)
+	}
+}
+
+func TestConfirmGetReturnsOperationCommand(t *testing.T) {
+	model := readyModel()
+	model.focus = focusResources
+	model.tab = tabNotes
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	model = updated.(Model)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("confirm get cmd = nil, want operation command")
+	}
+	if !got.loading {
+		t.Fatal("loading = false, want true while get runs")
+	}
+	if got.status != "Getting..." {
+		t.Fatalf("status = %q, want Getting...", got.status)
+	}
+}
+
+func TestViewRendersGetHint(t *testing.T) {
+	model := readyModel()
+	model.focus = focusResources
+
+	view := model.View()
+	if !strings.Contains(view, "g get") {
+		t.Fatalf("View() missing get hint in %q", view)
+	}
+}
+
 func TestEditEnvCanStartWithoutExistingEnv(t *testing.T) {
 	model := readyModel()
 	model.resources.EnvNote = nil
