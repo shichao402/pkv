@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,6 +55,42 @@ func TestBuildAddSSHKeyParamsRejectsPublicKeyWithoutPrivatePath(t *testing.T) {
 			t.Fatalf("error = %v, want --pub requires --priv", err)
 		}
 	})
+}
+
+func TestNoteNameForAddDerivesRelativePath(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	dir := filepath.Join(cwd, "xxx", "aaa", "bbb")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	path := filepath.Join(dir, "test.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := noteNameForAdd("", filepath.Join("xxx", "aaa", "bbb", "test.json"))
+	if err != nil {
+		t.Fatalf("noteNameForAdd() error = %v", err)
+	}
+	if got != "xxx/aaa/bbb/test.json" {
+		t.Fatalf("noteNameForAdd() = %q, want relative slash path", got)
+	}
+}
+
+func TestNoteNameForAddKeepsExplicitName(t *testing.T) {
+	cwd := t.TempDir()
+	outside := t.TempDir()
+	t.Chdir(cwd)
+	path := filepath.Join(outside, "test.json")
+
+	got, err := noteNameForAdd("custom.json", path)
+	if err != nil {
+		t.Fatalf("noteNameForAdd() error = %v", err)
+	}
+	if got != "custom.json" {
+		t.Fatalf("noteNameForAdd() = %q, want explicit name", got)
+	}
 }
 
 func withAddSSHFlags(t *testing.T, fn func()) {

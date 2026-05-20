@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -42,6 +43,7 @@ const (
 	interactionEdit
 	interactionSSHWizard
 	interactionAddFolder
+	interactionAddNoteFile
 )
 
 type confirmKind int
@@ -111,6 +113,11 @@ type addFolderState struct {
 	err       string
 }
 
+type addNoteFileState struct {
+	picker filepicker.Model
+	err    string
+}
+
 type Model struct {
 	ctx      context.Context
 	reporter *Reporter
@@ -130,6 +137,7 @@ type Model struct {
 	edit        editState
 	sshWizard   sshWizardState
 	addFolder   addFolderState
+	addNoteFile addNoteFileState
 
 	helpOpen bool
 	loading  bool
@@ -221,6 +229,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resizeInputs()
+		if m.interaction == interactionAddNoteFile {
+			return m.handleAddNoteFileMsg(msg)
+		}
 		return m, nil
 	case statusMsg:
 		m.status = msg.message
@@ -294,6 +305,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	default:
+		if m.interaction == interactionAddNoteFile {
+			return m.handleAddNoteFileMsg(msg)
+		}
 		return m, nil
 	}
 }
@@ -317,6 +331,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.interaction == interactionAddFolder {
 		return m.handleAddFolderKey(msg)
+	}
+	if m.interaction == interactionAddNoteFile {
+		return m.handleAddNoteFileMsg(msg)
 	}
 
 	switch {
@@ -495,6 +512,29 @@ func (m Model) createFolderCmd(state addFolderState) tea.Cmd {
 	}
 }
 
+func (m Model) addNoteFileCmd(path string) tea.Cmd {
+	folder := m.folderName()
+	return func() tea.Msg {
+		name, err := pathutil.RelativeFileNoteName(path)
+		if err != nil {
+			return operationResultMsg{err: fmt.Errorf("derive note name from file: %w", err)}
+		}
+		expanded, err := pathutil.ExpandTilde(path)
+		if err != nil {
+			return operationResultMsg{err: fmt.Errorf("resolve file path: %w", err)}
+		}
+		data, err := os.ReadFile(expanded)
+		if err != nil {
+			return operationResultMsg{err: fmt.Errorf("read file: %w", err)}
+		}
+		result, err := app.AddNote(m.ctx, app.AddParams{Folder: folder, Name: name, Content: string(data)}, m.reporter)
+		if err != nil {
+			return operationResultMsg{err: err}
+		}
+		return operationResultMsg{message: fmt.Sprintf("Note '%s' added (%s).", name, shortID(result.ItemID)), reload: true}
+	}
+}
+
 func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.quit), key.Matches(msg, m.keys.ctrlC):
@@ -597,6 +637,26 @@ func (m Model) handleAddFolderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleAddNoteFileMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && key.Matches(keyMsg, m.keys.escape) {
+		m.interaction = interactionNone
+		m.status = "Add note file canceled."
+		return m, nil
+	}
+
+	picker, cmd := m.addNoteFile.picker.Update(msg)
+	m.addNoteFile.picker = picker
+	if didSelect, path := picker.DidSelectFile(msg); didSelect {
+		m.interaction = interactionNone
+		m.invalidateLoads()
+		m.loading = true
+		m.err = nil
+		m.status = "Adding note file..."
+		return m, m.addNoteFileCmd(path)
+	}
+	return m, cmd
+}
+
 func (m Model) handleSSHWizardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.escape) {
 		m.interaction = interactionNone
@@ -672,14 +732,25 @@ func (m Model) startAdd() (tea.Model, tea.Cmd) {
 		m.status = "Adding folder."
 		return m, nil
 	}
-	if m.currentFolder == nil || m.tab != tabSSH {
-		m.status = "Add is available for folders and SSH keys."
+	if m.currentFolder == nil {
+		m.status = "No folder selected."
 		return m, nil
 	}
-	m.interaction = interactionSSHWizard
-	m.sshWizard = newSSHWizardState()
-	m.status = "Adding SSH key."
-	return m, nil
+	switch m.tab {
+	case tabSSH:
+		m.interaction = interactionSSHWizard
+		m.sshWizard = newSSHWizardState()
+		m.status = "Adding SSH key."
+		return m, nil
+	case tabNotes:
+		m.interaction = interactionAddNoteFile
+		m.addNoteFile = newAddNoteFileState()
+		m.status = "Select a file to add as note."
+		return m, m.addNoteFile.picker.Init()
+	default:
+		m.status = "Add is available for folders, SSH keys, and note files."
+		return m, nil
+	}
 }
 
 func (m Model) startEdit() (tea.Model, tea.Cmd) {
@@ -861,6 +932,11 @@ func (m *Model) resizeInputs() {
 	m.sshWizard.nameInput.SetWidth(width)
 	m.addFolder.nameInput.SetWidth(width)
 	m.addFolder.nameInput.SetHeight(1)
+	pickerHeight := m.height - 12
+	if pickerHeight < 8 {
+		pickerHeight = 12
+	}
+	m.addNoteFile.picker.SetHeight(pickerHeight)
 }
 
 func (m Model) folderName() string {
@@ -1049,6 +1125,16 @@ func newAddFolderState() addFolderState {
 	nameInput := newTextBuffer("")
 	nameInput.SetHeight(1)
 	return addFolderState{nameInput: nameInput}
+}
+
+func newAddNoteFileState() addNoteFileState {
+	picker := filepicker.New()
+	picker.CurrentDirectory = "."
+	picker.DirAllowed = false
+	picker.FileAllowed = true
+	picker.AutoHeight = false
+	picker.SetHeight(12)
+	return addNoteFileState{picker: picker}
 }
 
 func resolveSSHWizardKey(value string) (expandedPath, openSSHKey, publicKey, fingerprint string, generated bool, err error) {

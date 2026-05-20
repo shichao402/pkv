@@ -805,7 +805,7 @@ func AddEnv(ctx context.Context, params AddParams, r Reporter) (AddResult, error
 func AddNote(ctx context.Context, params AddParams, r Reporter) (AddResult, error) {
 	r = reporterOrNoop(r)
 	if params.Name == "" {
-		return AddResult{}, fmt.Errorf("--name is required: pkv add <folder> note --name <name> [--file <path>]")
+		return AddResult{}, fmt.Errorf("note name is required")
 	}
 	if params.Name == bwtypes.ReservedEnvNoteName {
 		return AddResult{}, fmt.Errorf("note name '%s' is reserved for folder env data", bwtypes.ReservedEnvNoteName)

@@ -78,7 +78,7 @@ var getCmd = &cobra.Command{
 var addCmd = &cobra.Command{
 	Use:     "add <folder> <ssh|env|note>",
 	Short:   "Create resources in a Bitwarden folder",
-	Example: "  pkv add prod ssh --priv ~/.ssh/id_ed25519 --name github\n  pkv add prod env --file .env.prod\n  pkv add prod note --name app.secrets.json --file ./app.secrets.json",
+	Example: "  pkv add prod ssh --priv ~/.ssh/id_ed25519 --name github\n  pkv add prod env --file .env.prod\n  pkv add prod note --file ./xxx/aaa/bbb/test.json",
 	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		folder, kind := args[0], args[1]
@@ -234,6 +234,10 @@ var addNoteCmd = &cobra.Command{
 	Short: "Create a config note in a folder",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		noteName, err := noteNameForAdd(addNameFlag, addNoteFileFlag)
+		if err != nil {
+			return err
+		}
 		content, err := readNoteContent(addNoteFileFlag, "Opening editor to write note content...")
 		if err != nil {
 			return err
@@ -242,7 +246,7 @@ var addNoteCmd = &cobra.Command{
 			fmt.Println("Empty content, canceled.")
 			return nil
 		}
-		_, err = app.AddNote(commandContext(cmd), app.AddParams{Folder: args[0], Name: addNameFlag, Content: content}, cliReporter())
+		_, err = app.AddNote(commandContext(cmd), app.AddParams{Folder: args[0], Name: noteName, Content: content}, cliReporter())
 		return err
 	},
 }
@@ -320,7 +324,7 @@ func init() {
 
 	addCmd.Flags().StringVar(&addSSHPrivFlag, "priv", "", "Private key file path (used with ssh)")
 	addCmd.Flags().StringVar(&addSSHPubFlag, "pub", "", "Public key, ssh-rsa AAAA... format (used with ssh)")
-	addCmd.Flags().StringVar(&addNameFlag, "name", "", "Item name in Bitwarden (used with ssh/note)")
+	addCmd.Flags().StringVar(&addNameFlag, "name", "", "Item name in Bitwarden (used with ssh/note; note --file derives from relative path when omitted)")
 	addCmd.Flags().StringVar(&addNoteFileFlag, "file", "", "File path to read content from (used with env/note)")
 
 	// Server-side keypair generation flags (only relevant for `pkv add <folder> ssh`).
@@ -333,6 +337,17 @@ func init() {
 	// `pkv get <folder> ssh --authorize`: append every pulled public key to
 	// the current host's ~/.ssh/authorized_keys (the ssh-copy-id role).
 	getCmd.Flags().BoolVar(&getSSHAuthorizeFlag, "authorize", false, "After deploy, append each public key to ~/.ssh/authorized_keys on this host")
+}
+
+func noteNameForAdd(nameFlag, fileFlag string) (string, error) {
+	if nameFlag != "" || fileFlag == "" {
+		return nameFlag, nil
+	}
+	name, err := pathutil.RelativeFileNoteName(fileFlag)
+	if err != nil {
+		return "", fmt.Errorf("derive note name from file: %w", err)
+	}
+	return name, nil
 }
 
 func readNoteContent(fileFlag, openEditorMessage string) (string, error) {

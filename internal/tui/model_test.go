@@ -317,6 +317,41 @@ func TestEditorFinishedWithChangesReturnsSaveCommand(t *testing.T) {
 	}
 }
 
+func TestAddNoteFileStartsFromNotesTabAndEscCancels(t *testing.T) {
+	model := readyModel()
+	model.focus = focusResources
+	model.tab = tabNotes
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("add note file cmd = nil, want file picker init command")
+	}
+	if got.interaction != interactionAddNoteFile {
+		t.Fatalf("interaction = %v, want add note file", got.interaction)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatal("escape cmd = non-nil, want no command")
+	}
+	if got.interaction != interactionNone {
+		t.Fatalf("interaction = %v, want none", got.interaction)
+	}
+}
+
+func TestNotesViewRendersAddNoteFileHint(t *testing.T) {
+	model := readyModel()
+	model.focus = focusResources
+	model.tab = tabNotes
+
+	view := model.View()
+	if !strings.Contains(view, "a add note file") {
+		t.Fatalf("View() missing add note file hint in %q", view)
+	}
+}
+
 func TestAddFolderStartsFromFolderListAndEscCancels(t *testing.T) {
 	model := readyModel()
 	model.focus = focusFolders

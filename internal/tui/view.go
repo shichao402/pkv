@@ -72,6 +72,8 @@ func renderBreadcrumb(m Model) string {
 		parts = append(parts, "Add SSH")
 	case interactionAddFolder:
 		parts = append(parts, "Add Folder")
+	case interactionAddNoteFile:
+		parts = append(parts, "Add Note File")
 	}
 	if m.helpOpen {
 		parts = append(parts, "Help")
@@ -136,6 +138,8 @@ func renderResources(m Model) string {
 		return renderSSHWizard(m)
 	case interactionAddFolder:
 		return renderAddFolder(m)
+	case interactionAddNoteFile:
+		return renderAddNoteFile(m)
 	}
 	if m.focus == focusDetail {
 		return renderDetail(m)
@@ -294,6 +298,20 @@ func renderAddFolder(m Model) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+func renderAddNoteFile(m Model) string {
+	var b strings.Builder
+	b.WriteString(focusedStyle.Render("Add Note File"))
+	b.WriteString("\n\n")
+	fmt.Fprintf(&b, "Folder: %s\n", m.folderName())
+	fmt.Fprintf(&b, "Current: %s\n\n", m.addNoteFile.picker.CurrentDirectory)
+	if m.addNoteFile.err != "" {
+		b.WriteString(errorStyle.Render(m.addNoteFile.err))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(m.addNoteFile.picker.View())
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func renderSSHWizard(m Model) string {
 	var b strings.Builder
 	b.WriteString(focusedStyle.Render("Add SSH Key"))
@@ -357,6 +375,8 @@ func renderFooterHint(m Model) string {
 		return fmt.Sprintf("Edit %s · ctrl+s save · esc cancel · ? help", tabName(m.edit.tab))
 	case interactionAddFolder:
 		return "Add Folder · enter/ctrl+s create · esc cancel · ? help"
+	case interactionAddNoteFile:
+		return "Add Note File · ↑↓ navigate · enter select/open · h/← parent · esc cancel · ? help"
 	case interactionSSHWizard:
 		return renderSSHWizardFooterHint(m)
 	default:
@@ -383,7 +403,7 @@ func renderResourceFooterHint(m Model) string {
 	case tabEnv:
 		parts = append(parts, "e edit/create env")
 	case tabNotes:
-		parts = append(parts, "e edit note")
+		parts = append(parts, "a add note file", "e edit note")
 	}
 	parts = append(parts, "d remove", "c clean", "esc folders", "? help", "q quit")
 	return strings.Join(parts, " · ")
@@ -393,6 +413,9 @@ func renderDetailFooterHint(m Model) string {
 	parts := []string{tabName(m.tab) + " Detail", "g get"}
 	if m.tab == tabEnv || m.tab == tabNotes {
 		parts = append(parts, "e edit")
+	}
+	if m.tab == tabNotes {
+		parts = append(parts, "a add note file")
 	}
 	parts = append(parts, "d remove", "c clean", "esc back", "? help", "q quit")
 	return strings.Join(parts, " · ")
@@ -429,7 +452,7 @@ func renderHelpPopup(m Model, contentWidth int) string {
 		"",
 		"Resources",
 		"  ↑/↓ or j/k move    enter detail    tab/←→ switch tab    esc folders",
-		"  g get    d remove    c clean    a add ssh    e edit env/note",
+		"  g get    d remove    c clean    a add ssh/note-file    e edit env/note",
 		"",
 		"Detail",
 		"  esc back    g get    d remove    c clean    e edit env/note",
