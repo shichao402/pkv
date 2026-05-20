@@ -631,6 +631,74 @@ type AddSSHKeyParams struct {
 	Generated   bool
 }
 
+type AddFolderParams struct {
+	Name string
+}
+
+type AddFolderResult struct {
+	Folder bwtypes.Folder
+}
+
+type addFolderClient interface {
+	EnsureUnlocked() (string, error)
+	Sync(session string) error
+	ListFolders(session string) ([]bwtypes.Folder, error)
+	CreateFolder(session, name string) (bwtypes.Folder, error)
+}
+
+func AddFolder(ctx context.Context, params AddFolderParams, r Reporter) (AddFolderResult, error) {
+	return addFolderWithClient(ctx, bw.NewClient(), params, r)
+}
+
+func addFolderWithClient(ctx context.Context, client addFolderClient, params AddFolderParams, r Reporter) (AddFolderResult, error) {
+	r = reporterOrNoop(r)
+	name := strings.TrimSpace(params.Name)
+	if name == "" {
+		return AddFolderResult{}, fmt.Errorf("folder name is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return AddFolderResult{}, err
+	}
+
+	r.Info("Authenticating with Bitwarden...")
+	session, err := client.EnsureUnlocked()
+	if err != nil {
+		return AddFolderResult{}, fmt.Errorf("authentication failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return AddFolderResult{}, err
+	}
+
+	r.Info("Syncing vault...")
+	if err := client.Sync(session); err != nil {
+		return AddFolderResult{}, fmt.Errorf("sync failed: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return AddFolderResult{}, err
+	}
+
+	folders, err := client.ListFolders(session)
+	if err != nil {
+		return AddFolderResult{}, fmt.Errorf("list folders failed: %w", err)
+	}
+	for _, folder := range folders {
+		if strings.EqualFold(folder.Name, name) {
+			return AddFolderResult{}, fmt.Errorf("folder '%s' already exists", folder.Name)
+		}
+	}
+
+	r.Infof("Creating folder '%s'...\n", name)
+	folder, err := client.CreateFolder(session, name)
+	if err != nil {
+		return AddFolderResult{}, fmt.Errorf("create folder failed: %w", err)
+	}
+	if folder.Name == "" {
+		folder.Name = name
+	}
+	r.Infof("Folder '%s' created (ID: %s)\n", folder.Name, folder.ID)
+	return AddFolderResult{Folder: folder}, nil
+}
+
 func Add(ctx context.Context, params AddParams, r Reporter) (AddResult, error) {
 	switch params.Kind {
 	case "ssh":

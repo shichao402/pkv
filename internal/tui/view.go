@@ -55,6 +55,8 @@ func renderBreadcrumb(m Model) string {
 		parts = append(parts, "Edit")
 	case interactionSSHWizard:
 		parts = append(parts, "Add SSH")
+	case interactionAddFolder:
+		parts = append(parts, "Add Folder")
 	}
 	return titleStyle.Render(strings.Join(parts, " › "))
 }
@@ -73,6 +75,8 @@ func renderFolderList(m Model) string {
 			b.WriteString(subtleStyle.Render("Loading folders..."))
 		} else {
 			b.WriteString(subtleStyle.Render("No folders."))
+			b.WriteString("\n\n")
+			b.WriteString(renderFolderHints())
 		}
 		return b.String()
 	}
@@ -88,6 +92,8 @@ func renderFolderList(m Model) string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
+	b.WriteString("\n")
+	b.WriteString(renderFolderHints())
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -99,6 +105,8 @@ func renderResources(m Model) string {
 		return renderEdit(m)
 	case interactionSSHWizard:
 		return renderSSHWizard(m)
+	case interactionAddFolder:
+		return renderAddFolder(m)
 	}
 	if m.focus == focusDetail {
 		return renderDetail(m)
@@ -262,6 +270,21 @@ func renderEdit(m Model) string {
 	return b.String()
 }
 
+func renderAddFolder(m Model) string {
+	var b strings.Builder
+	b.WriteString(focusedStyle.Render("Add Folder"))
+	b.WriteString("\n\n")
+	if m.addFolder.err != "" {
+		b.WriteString(errorStyle.Render(m.addFolder.err))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Folder name\n")
+	b.WriteString(m.addFolder.nameInput.View())
+	b.WriteString("\n\n")
+	b.WriteString(subtleStyle.Render("enter/ctrl+s create · esc cancel"))
+	return b.String()
+}
+
 func renderSSHWizard(m Model) string {
 	var b strings.Builder
 	b.WriteString(focusedStyle.Render("Add SSH Key"))
@@ -318,6 +341,10 @@ func renderFooter(m Model) string {
 		status = subtleStyle.Render(status)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, "", status, subtleStyle.Render("↑↓ navigate · enter select · tab/←→ switch · g get · a add · e edit · d remove · c clean · u unlock · r reload · q quit"))
+}
+
+func renderFolderHints() string {
+	return subtleStyle.Render("enter resources · a add folder · r reload")
 }
 
 func renderResourceHints(m Model) string {

@@ -106,6 +106,28 @@ func (c *Client) ListFolders(session string) ([]types.Folder, error) {
 	return folders, nil
 }
 
+// CreateFolder creates a Bitwarden folder.
+func (c *Client) CreateFolder(session, name string) (types.Folder, error) {
+	payload, err := json.Marshal(struct {
+		Name string `json:"name"`
+	}{Name: name})
+	if err != nil {
+		return types.Folder{}, fmt.Errorf("failed to encode folder: %w", err)
+	}
+
+	out, err := c.run(session, "create", "folder", base64Encode(payload))
+	if err != nil {
+		return types.Folder{}, err
+	}
+
+	var folder types.Folder
+	if err := json.Unmarshal([]byte(out), &folder); err != nil {
+		return types.Folder{}, fmt.Errorf("failed to parse folder: %w", err)
+	}
+	invalidateSyncCache()
+	return folder, nil
+}
+
 // GetFolderID returns the folder ID for the given folder name.
 func (c *Client) GetFolderID(session, name string) (string, error) {
 	out, err := c.run(session, "list", "folders", "--search", name)

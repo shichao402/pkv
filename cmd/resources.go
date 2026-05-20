@@ -95,6 +95,22 @@ var addCmd = &cobra.Command{
 	},
 }
 
+var folderCmd = &cobra.Command{
+	Use:   "folder",
+	Short: "Manage Bitwarden folders",
+}
+
+var folderAddCmd = &cobra.Command{
+	Use:     "add <name>",
+	Short:   "Create a Bitwarden folder",
+	Example: "  pkv folder add prod",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := app.AddFolder(commandContext(cmd), app.AddFolderParams{Name: args[0]}, cliReporter())
+		return err
+	},
+}
+
 var addSSHCmd = &cobra.Command{
 	Use:   "ssh <folder>",
 	Short: "Add an SSH key to a folder",
@@ -295,7 +311,8 @@ var cleanCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(listCmd, getCmd, addCmd, editCmd, removeCmd, cleanCmd)
+	rootCmd.AddCommand(listCmd, getCmd, addCmd, editCmd, removeCmd, cleanCmd, folderCmd)
+	folderCmd.AddCommand(folderAddCmd)
 
 	// --resolved applies to `pkv list <folder>`; the flag has no effect on
 	// the bare `pkv list` (folders listing) and is silently ignored there.

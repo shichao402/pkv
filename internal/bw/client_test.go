@@ -1,6 +1,7 @@
 package bw
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -369,6 +370,34 @@ func TestEnsureUnlockedReturnsExportedSessionValidationError(t *testing.T) {
 	}
 }
 
+func TestCreateFolder(t *testing.T) {
+	t.Setenv("BW_SESSION", "test-session")
+	logPath := filepath.Join(t.TempDir(), "bw.log")
+
+	client := NewClient()
+	client.execCommand = newTestBWExecCommand(t, "create_folder_ok", logPath)
+	client.lookPath = func(string) (string, error) { return "/usr/local/bin/bw", nil }
+
+	folder, err := client.CreateFolder("test-session", "prod")
+	if err != nil {
+		t.Fatalf("CreateFolder() error = %v", err)
+	}
+	if folder.ID != "folder-created" || folder.Name != "prod" {
+		t.Fatalf("CreateFolder() = %+v, want created prod folder", folder)
+	}
+
+	calls := readTestBWCalls(t, logPath)
+	if len(calls) != 1 {
+		t.Fatalf("bw calls = %#v, want one create call", calls)
+	}
+	if !strings.Contains(calls[0], " create folder ") {
+		t.Fatalf("bw call = %q, want create folder", calls[0])
+	}
+	if strings.Contains(calls[0], "--name") {
+		t.Fatalf("bw call = %q, should use encoded JSON instead of --name", calls[0])
+	}
+}
+
 func TestGetFolderID(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -579,6 +608,21 @@ func TestClientHelperProcess(t *testing.T) {
 		// Both "Dev" and "dev" exist; exact match must win regardless of order.
 		if strings.HasPrefix(joined, "--nointeraction --session test-session list folders --search ") {
 			_, _ = fmt.Fprint(os.Stdout, `[{"id":"folder-dev-lower","name":"dev"},{"id":"folder-dev-cap","name":"Dev"}]`)
+			os.Exit(0)
+		}
+	case "create_folder_ok":
+		if strings.HasPrefix(joined, "--nointeraction --session test-session create folder ") {
+			parts := strings.Fields(joined)
+			if len(parts) != 6 {
+				_, _ = fmt.Fprintf(os.Stderr, "unexpected create folder args: %q\n", joined)
+				os.Exit(2)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(parts[5])
+			if err != nil || string(decoded) != `{"name":"prod"}` {
+				_, _ = fmt.Fprintf(os.Stderr, "invalid folder payload: %q err=%v\n", string(decoded), err)
+				os.Exit(2)
+			}
+			_, _ = fmt.Fprint(os.Stdout, `{"id":"folder-created","name":"prod"}`)
 			os.Exit(0)
 		}
 	}

@@ -22,6 +22,7 @@ Common commands:
   pkv list
   pkv list <folder>
   pkv get <folder> ssh|env|note
+  pkv folder add <name>
   pkv add <folder> ssh|env|note
   pkv edit <folder> env
   pkv edit <folder> note <name-or-id>

@@ -41,6 +41,7 @@ const (
 	interactionConfirm
 	interactionEdit
 	interactionSSHWizard
+	interactionAddFolder
 )
 
 type confirmKind int
@@ -104,6 +105,11 @@ type sshWizardState struct {
 	err          string
 }
 
+type addFolderState struct {
+	nameInput textBuffer
+	err       string
+}
+
 type Model struct {
 	ctx      context.Context
 	reporter *Reporter
@@ -122,6 +128,7 @@ type Model struct {
 	confirm     confirmState
 	edit        editState
 	sshWizard   sshWizardState
+	addFolder   addFolderState
 
 	loading bool
 	status  string
@@ -299,6 +306,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.interaction == interactionSSHWizard {
 		return m.handleSSHWizardKey(msg)
 	}
+	if m.interaction == interactionAddFolder {
+		return m.handleAddFolderKey(msg)
+	}
 
 	switch {
 	case key.Matches(msg, m.keys.quit), key.Matches(msg, m.keys.ctrlC):
@@ -465,6 +475,17 @@ func (m Model) saveSSHWizardCmd(state sshWizardState) tea.Cmd {
 	}
 }
 
+func (m Model) createFolderCmd(state addFolderState) tea.Cmd {
+	name := strings.TrimSpace(state.nameInput.Value())
+	return func() tea.Msg {
+		result, err := app.AddFolder(m.ctx, app.AddFolderParams{Name: name}, m.reporter)
+		if err != nil {
+			return operationResultMsg{err: err}
+		}
+		return operationResultMsg{message: fmt.Sprintf("Folder '%s' created.", result.Folder.Name), reload: true}
+	}
+}
+
 func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.focus {
 	case focusFolders:
@@ -528,6 +549,30 @@ func (m Model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.saveEditCmd(state, state.content.Value())
 	}
 	m.edit.content = m.edit.content.Update(msg)
+	return m, nil
+}
+
+func (m Model) handleAddFolderKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.escape) {
+		m.interaction = interactionNone
+		m.status = "Add folder canceled."
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.enter) || key.Matches(msg, m.keys.save) {
+		if strings.TrimSpace(m.addFolder.nameInput.Value()) == "" {
+			m.addFolder.err = "Folder name cannot be empty."
+			return m, nil
+		}
+		state := m.addFolder
+		m.interaction = interactionNone
+		m.invalidateLoads()
+		m.loading = true
+		m.err = nil
+		m.status = "Creating folder..."
+		return m, m.createFolderCmd(state)
+	}
+	m.addFolder.err = ""
+	m.addFolder.nameInput = m.addFolder.nameInput.Update(msg)
 	return m, nil
 }
 
@@ -600,8 +645,14 @@ func (m Model) advanceSSHWizard() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) startAdd() (tea.Model, tea.Cmd) {
+	if m.focus == focusFolders {
+		m.interaction = interactionAddFolder
+		m.addFolder = newAddFolderState()
+		m.status = "Adding folder."
+		return m, nil
+	}
 	if m.currentFolder == nil || m.tab != tabSSH {
-		m.status = "Add is currently available for SSH keys."
+		m.status = "Add is available for folders and SSH keys."
 		return m, nil
 	}
 	m.interaction = interactionSSHWizard
@@ -787,6 +838,8 @@ func (m *Model) resizeInputs() {
 	m.sshWizard.privateInput.SetWidth(width)
 	m.sshWizard.publicInput.SetWidth(width)
 	m.sshWizard.nameInput.SetWidth(width)
+	m.addFolder.nameInput.SetWidth(width)
+	m.addFolder.nameInput.SetHeight(1)
 }
 
 func (m Model) folderName() string {
@@ -968,6 +1021,12 @@ func newSSHWizardState() sshWizardState {
 		publicInput:  publicInput,
 		nameInput:    nameInput,
 	}
+}
+
+func newAddFolderState() addFolderState {
+	nameInput := newTextBuffer("")
+	nameInput.SetHeight(1)
+	return addFolderState{nameInput: nameInput}
 }
 
 func resolveSSHWizardKey(value string) (expandedPath, openSSHKey, publicKey, fingerprint string, generated bool, err error) {

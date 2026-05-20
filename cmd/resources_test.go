@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+func TestFolderAddCommandIsRegistered(t *testing.T) {
+	cmd, remaining, err := rootCmd.Find([]string{"folder", "add", "prod"})
+	if err != nil {
+		t.Fatalf("Find(folder add) error = %v", err)
+	}
+	if cmd != folderAddCmd {
+		t.Fatalf("Find(folder add) = %v, want folderAddCmd", cmd.Name())
+	}
+	if strings.Join(remaining, ",") != "prod" {
+		t.Fatalf("remaining args = %v, want prod", remaining)
+	}
+}
+
 func TestBuildAddSSHKeyParamsGeneratesWhenPrivatePathMissing(t *testing.T) {
 	withAddSSHFlags(t, func() {
 		addNameFlag = "generated-key"

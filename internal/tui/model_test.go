@@ -292,6 +292,69 @@ func TestEditorFinishedWithChangesReturnsSaveCommand(t *testing.T) {
 	}
 }
 
+func TestAddFolderStartsFromFolderListAndEscCancels(t *testing.T) {
+	model := readyModel()
+	model.focus = focusFolders
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("add folder cmd = non-nil, want input mode only")
+	}
+	if got.interaction != interactionAddFolder {
+		t.Fatalf("interaction = %v, want add folder", got.interaction)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatal("escape cmd = non-nil, want no command")
+	}
+	if got.interaction != interactionNone {
+		t.Fatalf("interaction = %v, want none", got.interaction)
+	}
+}
+
+func TestAddFolderRejectsEmptyInputInTUI(t *testing.T) {
+	model := readyModel()
+	model.focus = focusFolders
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	model = updated.(Model)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("empty folder enter cmd = non-nil, want validation only")
+	}
+	if got.interaction != interactionAddFolder {
+		t.Fatalf("interaction = %v, want add folder", got.interaction)
+	}
+	if !strings.Contains(got.addFolder.err, "cannot be empty") {
+		t.Fatalf("addFolder.err = %q, want empty validation", got.addFolder.err)
+	}
+}
+
+func TestAddFolderWithNameReturnsOperationCommand(t *testing.T) {
+	model := readyModel()
+	model.focus = focusFolders
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	model = updated.(Model)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("dev")})
+	model = updated.(Model)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("folder create cmd = nil, want operation command")
+	}
+	if !got.loading {
+		t.Fatal("loading = false, want true while folder create runs")
+	}
+	if got.interaction != interactionNone {
+		t.Fatalf("interaction = %v, want none", got.interaction)
+	}
+}
+
 func TestSSHWizardBlankPrivatePathGeneratesKey(t *testing.T) {
 	model := readyModel()
 	model.tab = tabSSH
