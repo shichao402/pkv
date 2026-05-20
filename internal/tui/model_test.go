@@ -256,6 +256,31 @@ func TestViewRendersGetHint(t *testing.T) {
 	}
 }
 
+func TestHelpPopupOpensAndCloses(t *testing.T) {
+	model := readyModel()
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("help key cmd = non-nil, want local state update only")
+	}
+	if !got.helpOpen {
+		t.Fatal("helpOpen = false, want true")
+	}
+	if view := got.View(); !strings.Contains(view, "Keyboard Help") || !strings.Contains(view, "?/esc close") {
+		t.Fatalf("View() missing help popup in %q", view)
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatal("escape help cmd = non-nil, want local state update only")
+	}
+	if got.helpOpen {
+		t.Fatal("helpOpen = true, want false")
+	}
+}
+
 func TestEditEnvCanStartWithoutExistingEnv(t *testing.T) {
 	model := readyModel()
 	model.resources.EnvNote = nil

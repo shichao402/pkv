@@ -11,15 +11,19 @@ import (
 )
 
 var (
-	appStyle      = lipgloss.NewStyle().Padding(1, 2)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
-	focusedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	subtleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57"))
-	tabStyle      = lipgloss.NewStyle().Padding(0, 1).Foreground(lipgloss.Color("245"))
-	activeTab     = tabStyle.Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true)
+	appStyle           = lipgloss.NewStyle().Padding(1, 2)
+	titleStyle         = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
+	focusedStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+	subtleStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	errorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	panelStyle         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	focusedPanelStyle  = panelStyle.BorderForeground(lipgloss.Color("205"))
+	inactivePanelStyle = panelStyle.BorderForeground(lipgloss.Color("240"))
+	helpPanelStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("205")).Padding(1, 2)
+	selectedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true)
+	inactiveSelection  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	tabStyle           = lipgloss.NewStyle().Padding(0, 1).Foreground(lipgloss.Color("245"))
+	activeTab          = tabStyle.Foreground(lipgloss.Color("229")).Background(lipgloss.Color("57")).Bold(true)
 )
 
 func render(m Model) string {
@@ -32,9 +36,20 @@ func render(m Model) string {
 	rightWidth := contentWidth - leftWidth - 2
 
 	breadcrumb := renderBreadcrumb(m)
-	left := panelStyle.Width(leftWidth).Render(renderFolderList(m))
-	right := panelStyle.Width(rightWidth).Render(renderResources(m))
+	leftStyle := inactivePanelStyle
+	if folderPaneFocused(m) {
+		leftStyle = focusedPanelStyle
+	}
+	rightStyle := inactivePanelStyle
+	if resourcePaneFocused(m) {
+		rightStyle = focusedPanelStyle
+	}
+	left := leftStyle.Width(leftWidth).Render(renderFolderList(m))
+	right := rightStyle.Width(rightWidth).Render(renderResources(m))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+	if m.helpOpen {
+		body = lipgloss.PlaceHorizontal(contentWidth, lipgloss.Center, renderHelpPopup(m, contentWidth))
+	}
 	footer := renderFooter(m)
 
 	return appStyle.Render(lipgloss.JoinVertical(lipgloss.Left, breadcrumb, body, footer))
@@ -58,16 +73,41 @@ func renderBreadcrumb(m Model) string {
 	case interactionAddFolder:
 		parts = append(parts, "Add Folder")
 	}
+	if m.helpOpen {
+		parts = append(parts, "Help")
+	}
 	return titleStyle.Render(strings.Join(parts, " › "))
+}
+
+func folderPaneFocused(m Model) bool {
+	return m.interaction == interactionNone && m.focus == focusFolders
+}
+
+func resourcePaneFocused(m Model) bool {
+	return m.interaction != interactionNone || m.focus == focusResources || m.focus == focusDetail
+}
+
+func renderPaneTitle(title string, active bool) string {
+	if active {
+		return focusedStyle.Render("● " + title)
+	}
+	return subtleStyle.Render("○ " + title)
+}
+
+func renderSelectableLine(value string, selected bool, active bool) string {
+	if !selected {
+		return "  " + value
+	}
+	if active {
+		return "▸ " + selectedStyle.Render(value)
+	}
+	return inactiveSelection.Render("▹ " + value)
 }
 
 func renderFolderList(m Model) string {
 	var b strings.Builder
-	title := "Folders"
-	if m.focus == focusFolders {
-		title = focusedStyle.Render(title)
-	}
-	b.WriteString(title)
+	active := folderPaneFocused(m)
+	b.WriteString(renderPaneTitle("Folders", active))
 	b.WriteString("\n\n")
 
 	if len(m.folders) == 0 {
@@ -75,25 +115,14 @@ func renderFolderList(m Model) string {
 			b.WriteString(subtleStyle.Render("Loading folders..."))
 		} else {
 			b.WriteString(subtleStyle.Render("No folders."))
-			b.WriteString("\n\n")
-			b.WriteString(renderFolderHints())
 		}
 		return b.String()
 	}
 
 	for i, folder := range m.folders {
-		cursor := "  "
-		line := folder.Name
-		if i == m.selectedFolder {
-			cursor = "▸ "
-			line = selectedStyle.Render(line)
-		}
-		b.WriteString(cursor)
-		b.WriteString(line)
+		b.WriteString(renderSelectableLine(folder.Name, i == m.selectedFolder, active))
 		b.WriteString("\n")
 	}
-	b.WriteString("\n")
-	b.WriteString(renderFolderHints())
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -113,13 +142,10 @@ func renderResources(m Model) string {
 	}
 
 	var b strings.Builder
-	title := "Resources"
-	if m.focus == focusResources {
-		title = focusedStyle.Render(title)
-	}
-	b.WriteString(title)
+	active := m.interaction == interactionNone && m.focus == focusResources
+	b.WriteString(renderPaneTitle("Resources", active))
 	b.WriteString("\n")
-	b.WriteString(renderTabs(m.tab))
+	b.WriteString(renderTabs(m.tab, active))
 	b.WriteString("\n\n")
 
 	if m.currentFolder == nil {
@@ -138,35 +164,26 @@ func renderResources(m Model) string {
 	items := m.currentItems()
 	if len(items) == 0 {
 		b.WriteString(subtleStyle.Render(fmt.Sprintf("No %s items.", strings.ToLower(tabName(m.tab)))))
-		b.WriteString("\n\n")
-		b.WriteString(renderResourceHints(m))
 		return b.String()
 	}
 
 	selected := m.selectedItem[m.tab]
 	for i, item := range items {
-		cursor := "  "
-		line := renderResourceLine(item)
-		if i == selected {
-			cursor = "▸ "
-			line = selectedStyle.Render(line)
-		}
-		b.WriteString(cursor)
-		b.WriteString(line)
+		b.WriteString(renderSelectableLine(renderResourceLine(item), i == selected, active))
 		b.WriteString("\n")
 	}
-	b.WriteString("\n")
-	b.WriteString(renderResourceHints(m))
 	return strings.TrimRight(b.String(), "\n")
 }
 
-func renderTabs(active resourceTab) string {
+func renderTabs(active resourceTab, paneActive bool) string {
 	names := []resourceTab{tabSSH, tabEnv, tabNotes}
 	parts := make([]string, 0, len(names))
 	for _, tab := range names {
 		label := tabName(tab)
-		if tab == active {
+		if tab == active && paneActive {
 			parts = append(parts, activeTab.Render(label))
+		} else if tab == active {
+			parts = append(parts, inactiveSelection.Render(label))
 		} else {
 			parts = append(parts, tabStyle.Render(label))
 		}
@@ -210,9 +227,7 @@ func renderDetail(m Model) string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
-	b.WriteString(renderDetailHints(m))
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func renderConfirm(m Model) string {
@@ -249,8 +264,6 @@ func renderConfirm(m Model) string {
 	}
 	b.WriteString("\n")
 	b.WriteString(errorStyle.Render(warning))
-	b.WriteString("\n\n")
-	b.WriteString(subtleStyle.Render("y confirm · n/esc cancel"))
 	return b.String()
 }
 
@@ -265,9 +278,7 @@ func renderEdit(m Model) string {
 	}
 	b.WriteString("\n")
 	b.WriteString(m.edit.content.View())
-	b.WriteString("\n\n")
-	b.WriteString(subtleStyle.Render("ctrl+s save · esc cancel"))
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func renderAddFolder(m Model) string {
@@ -280,9 +291,7 @@ func renderAddFolder(m Model) string {
 	}
 	b.WriteString("Folder name\n")
 	b.WriteString(m.addFolder.nameInput.View())
-	b.WriteString("\n\n")
-	b.WriteString(subtleStyle.Render("enter/ctrl+s create · esc cancel"))
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func renderSSHWizard(m Model) string {
@@ -298,18 +307,14 @@ func renderSSHWizard(m Model) string {
 	case sshStepPrivatePath:
 		b.WriteString("Private key path (leave empty to generate a new key)\n")
 		b.WriteString(m.sshWizard.privateInput.View())
-		b.WriteString("\n\n")
-		b.WriteString(subtleStyle.Render("enter next · esc cancel"))
 	case sshStepPublicKey:
 		b.WriteString("Public key (leave empty to use derived key)\n")
 		b.WriteString(m.sshWizard.publicInput.View())
 		b.WriteString("\n\n")
-		b.WriteString(subtleStyle.Render(fmt.Sprintf("Derived fingerprint: %s\nenter next · esc cancel", m.sshWizard.fingerprint)))
+		b.WriteString(subtleStyle.Render(fmt.Sprintf("Derived fingerprint: %s", m.sshWizard.fingerprint)))
 	case sshStepKeyName:
 		b.WriteString("Key name\n")
 		b.WriteString(m.sshWizard.nameInput.View())
-		b.WriteString("\n\n")
-		b.WriteString(subtleStyle.Render("enter summary · esc cancel"))
 	case sshStepConfirm:
 		publicKey := strings.TrimSpace(m.sshWizard.publicInput.Value())
 		if publicKey == "" {
@@ -324,10 +329,8 @@ func renderSSHWizard(m Model) string {
 		fmt.Fprintf(&b, "Private key: %s\n", privateKey)
 		fmt.Fprintf(&b, "Fingerprint: %s\n", m.sshWizard.fingerprint)
 		fmt.Fprintf(&b, "Public key:  %s\n", truncate(publicKey, 72))
-		b.WriteString("\n")
-		b.WriteString(subtleStyle.Render("y/ctrl+s create · n/esc cancel"))
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func renderFooter(m Model) string {
@@ -340,34 +343,101 @@ func renderFooter(m Model) string {
 	} else if m.loading {
 		status = subtleStyle.Render(status)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, "", status, subtleStyle.Render("↑↓ navigate · enter select · tab/←→ switch · g get · a add · e edit · d remove · c clean · u unlock · r reload · q quit"))
+	return lipgloss.JoinVertical(lipgloss.Left, "", status, subtleStyle.Render(renderFooterHint(m)))
 }
 
-func renderFolderHints() string {
-	return subtleStyle.Render("enter resources · a add folder · r reload")
-}
-
-func renderResourceHints(m Model) string {
-	if m.tab == tabSSH {
-		return subtleStyle.Render("enter detail · g get · a add ssh · d remove · c clean · tab switch · esc folders")
+func renderFooterHint(m Model) string {
+	if m.helpOpen {
+		return "Help · ?/esc close · q quit"
 	}
-	if m.tab == tabEnv {
-		return subtleStyle.Render("enter detail · g get · e edit/create env · d remove · c clean · tab switch · esc folders")
+	switch m.interaction {
+	case interactionConfirm:
+		return "Confirm · y confirm · n/esc cancel · ? help"
+	case interactionEdit:
+		return fmt.Sprintf("Edit %s · ctrl+s save · esc cancel · ? help", tabName(m.edit.tab))
+	case interactionAddFolder:
+		return "Add Folder · enter/ctrl+s create · esc cancel · ? help"
+	case interactionSSHWizard:
+		return renderSSHWizardFooterHint(m)
+	default:
+		return renderNavigationFooterHint(m)
 	}
-	return subtleStyle.Render("enter detail · g get · e edit note · d remove · c clean · tab switch · esc folders")
 }
 
-func renderDetailHints(m Model) string {
+func renderNavigationFooterHint(m Model) string {
+	switch m.focus {
+	case focusFolders:
+		return "Folders · ↑↓ navigate · enter open resources · tab/→ resources · a add folder · u unlock · r reload · ? help · q quit"
+	case focusDetail:
+		return renderDetailFooterHint(m)
+	default:
+		return renderResourceFooterHint(m)
+	}
+}
+
+func renderResourceFooterHint(m Model) string {
+	parts := []string{tabName(m.tab), "↑↓ navigate", "enter detail", "tab/←→ switch tab", "g get"}
 	switch m.tab {
 	case tabSSH:
-		return subtleStyle.Render("g get · d remove · c clean · esc back · q quit")
+		parts = append(parts, "a add ssh")
 	case tabEnv:
-		return subtleStyle.Render("g get · e edit · d remove · c clean · esc back · q quit")
+		parts = append(parts, "e edit/create env")
 	case tabNotes:
-		return subtleStyle.Render("g get · e edit · d remove · c clean · esc back · q quit")
-	default:
-		return subtleStyle.Render("esc back · q quit")
+		parts = append(parts, "e edit note")
 	}
+	parts = append(parts, "d remove", "c clean", "esc folders", "? help", "q quit")
+	return strings.Join(parts, " · ")
+}
+
+func renderDetailFooterHint(m Model) string {
+	parts := []string{tabName(m.tab) + " Detail", "g get"}
+	if m.tab == tabEnv || m.tab == tabNotes {
+		parts = append(parts, "e edit")
+	}
+	parts = append(parts, "d remove", "c clean", "esc back", "? help", "q quit")
+	return strings.Join(parts, " · ")
+}
+
+func renderSSHWizardFooterHint(m Model) string {
+	switch m.sshWizard.step {
+	case sshStepConfirm:
+		return "Add SSH · y/ctrl+s create · n/esc cancel · ? help"
+	case sshStepKeyName:
+		return "Add SSH · enter/ctrl+s summary · esc cancel · ? help"
+	default:
+		return "Add SSH · enter/ctrl+s next · esc cancel · ? help"
+	}
+}
+
+func renderHelpPopup(m Model, contentWidth int) string {
+	width := contentWidth - 12
+	if width > 72 {
+		width = 72
+	}
+	if width < 48 {
+		width = 48
+	}
+
+	sections := []string{
+		focusedStyle.Render("Keyboard Help"),
+		"",
+		"Global",
+		"  ? help    q quit    u unlock    r reload",
+		"",
+		"Folders",
+		"  ↑/↓ or j/k move    enter open resources    tab/→ focus resources    a add folder",
+		"",
+		"Resources",
+		"  ↑/↓ or j/k move    enter detail    tab/←→ switch tab    esc folders",
+		"  g get    d remove    c clean    a add ssh    e edit env/note",
+		"",
+		"Detail",
+		"  esc back    g get    d remove    c clean    e edit env/note",
+		"",
+		"Forms and confirmations",
+		"  ctrl+s save/create    y confirm    n/esc cancel",
+	}
+	return helpPanelStyle.Width(width).Render(strings.Join(sections, "\n"))
 }
 
 func localMaterializedScope(kind string) string {

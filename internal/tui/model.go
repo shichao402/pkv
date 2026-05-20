@@ -76,6 +76,7 @@ type keyMap struct {
 	clean  key.Binding
 	get    key.Binding
 	unlock key.Binding
+	help   key.Binding
 	save   key.Binding
 	quit   key.Binding
 	ctrlC  key.Binding
@@ -130,11 +131,12 @@ type Model struct {
 	sshWizard   sshWizardState
 	addFolder   addFolderState
 
-	loading bool
-	status  string
-	err     error
-	width   int
-	height  int
+	helpOpen bool
+	loading  bool
+	status   string
+	err      error
+	width    int
+	height   int
 
 	loadSeq      uint64
 	activeLoadID uint64
@@ -297,6 +299,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.helpOpen {
+		return m.handleHelpKey(msg)
+	}
+	if key.Matches(msg, m.keys.help) {
+		m.helpOpen = true
+		return m, nil
+	}
 	if m.interaction == interactionConfirm {
 		return m.handleConfirmKey(msg)
 	}
@@ -483,6 +492,18 @@ func (m Model) createFolderCmd(state addFolderState) tea.Cmd {
 			return operationResultMsg{err: err}
 		}
 		return operationResultMsg{message: fmt.Sprintf("Folder '%s' created.", result.Folder.Name), reload: true}
+	}
+}
+
+func (m Model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.quit), key.Matches(msg, m.keys.ctrlC):
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.help), key.Matches(msg, m.keys.escape):
+		m.helpOpen = false
+		return m, nil
+	default:
+		return m, nil
 	}
 }
 
@@ -1001,6 +1022,7 @@ func defaultKeyMap() keyMap {
 		clean:  key.NewBinding(key.WithKeys("c")),
 		get:    key.NewBinding(key.WithKeys("g")),
 		unlock: key.NewBinding(key.WithKeys("u")),
+		help:   key.NewBinding(key.WithKeys("?")),
 		save:   key.NewBinding(key.WithKeys("ctrl+s")),
 		quit:   key.NewBinding(key.WithKeys("q")),
 		ctrlC:  key.NewBinding(key.WithKeys("ctrl+c")),
