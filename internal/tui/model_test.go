@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -11,6 +12,58 @@ import (
 	bwtypes "github.com/shichao402/pkv/internal/bw/types"
 	"github.com/shichao402/pkv/internal/note"
 )
+
+func TestRunUnlocksBeforeStartingProgram(t *testing.T) {
+	oldUnlock, oldProgram := runStartupUnlock, runTeaProgram
+	defer func() {
+		runStartupUnlock = oldUnlock
+		runTeaProgram = oldProgram
+	}()
+	var calls []string
+
+	runStartupUnlock = func(context.Context) error {
+		calls = append(calls, "unlock")
+		return nil
+	}
+	runTeaProgram = func(Model) error {
+		calls = append(calls, "program")
+		return nil
+	}
+
+	err := Run(t.Context())
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if got := strings.Join(calls, ","); got != "unlock,program" {
+		t.Fatalf("call order = %q, want unlock,program", got)
+	}
+}
+
+func TestRunStopsWhenUnlockFails(t *testing.T) {
+	oldUnlock, oldProgram := runStartupUnlock, runTeaProgram
+	defer func() {
+		runStartupUnlock = oldUnlock
+		runTeaProgram = oldProgram
+	}()
+	unlockErr := errors.New("unlock failed")
+	startedProgram := false
+
+	runStartupUnlock = func(context.Context) error {
+		return unlockErr
+	}
+	runTeaProgram = func(Model) error {
+		startedProgram = true
+		return nil
+	}
+
+	err := Run(t.Context())
+	if !errors.Is(err, unlockErr) {
+		t.Fatalf("Run() error = %v, want %v", err, unlockErr)
+	}
+	if startedProgram {
+		t.Fatal("program started after unlock failure")
+	}
+}
 
 func TestUpdateVaultLoadedSelectsFirstFolder(t *testing.T) {
 	model := NewModel(t.Context())

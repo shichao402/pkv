@@ -171,7 +171,33 @@ func Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	_, err := tea.NewProgram(NewModel(ctx), tea.WithAltScreen()).Run()
+	return runWithDependencies(ctx, runStartupUnlock, runTeaProgram)
+}
+
+var (
+	runStartupUnlock = func(ctx context.Context) error {
+		return runInteractiveUnlock(ctx, app.TextReporter{Out: os.Stderr, Err: os.Stderr})
+	}
+	runTeaProgram = func(model Model) error {
+		_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
+		return err
+	}
+)
+
+func runWithDependencies(
+	ctx context.Context,
+	unlock func(context.Context) error,
+	runProgram func(Model) error,
+) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if unlock != nil {
+		if err := unlock(ctx); err != nil {
+			return err
+		}
+	}
+	err := runProgram(NewModel(ctx))
 	if err != nil {
 		return fmt.Errorf("tui failed: %w", err)
 	}
@@ -1346,4 +1372,3 @@ func clamp(value, size int) int {
 	}
 	return value
 }
-
