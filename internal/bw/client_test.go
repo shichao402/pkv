@@ -294,6 +294,7 @@ func TestBaseEncode(t *testing.T) {
 }
 
 func TestEnsureUnlockedReusesExportedSession(t *testing.T) {
+	resetBWInstalledCacheForTest()
 	t.Setenv("BW_SESSION", "valid-session")
 	logPath := filepath.Join(t.TempDir(), "bw.log")
 
@@ -318,6 +319,7 @@ func TestEnsureUnlockedReusesExportedSession(t *testing.T) {
 }
 
 func TestEnsureUnlockedRefreshesExpiredExportedSession(t *testing.T) {
+	resetBWInstalledCacheForTest()
 	t.Setenv("BW_SESSION", "expired-session")
 	logPath := filepath.Join(t.TempDir(), "bw.log")
 
@@ -347,6 +349,7 @@ func TestEnsureUnlockedRefreshesExpiredExportedSession(t *testing.T) {
 }
 
 func TestEnsureUnlockedReturnsExportedSessionValidationError(t *testing.T) {
+	resetBWInstalledCacheForTest()
 	t.Setenv("BW_SESSION", "flaky-session")
 	logPath := filepath.Join(t.TempDir(), "bw.log")
 

@@ -35,6 +35,27 @@ func (c *Client) LoadIncludeChain(session, rootFolder string) ([]types.Folder, e
 	return loadIncludeChain(rootFolder, listFolders, listItems)
 }
 
+// LoadIncludeChainFromVault resolves a pkv.include chain using folders and
+// per-folder items already held in memory (for example from ListAllItems).
+// No Bitwarden CLI calls are made.
+func LoadIncludeChainFromVault(
+	rootFolder string,
+	folders []types.Folder,
+	itemsByFolderID map[string][]types.Item,
+) ([]types.Folder, error) {
+	idByFolderID := make(map[string]string, len(folders))
+	for _, f := range folders {
+		idByFolderID[f.ID] = f.Name
+	}
+	listFolders := func() ([]types.Folder, error) {
+		return folders, nil
+	}
+	listItems := func(folderID string) ([]types.Item, error) {
+		return itemsByFolderID[folderID], nil
+	}
+	return loadIncludeChain(rootFolder, listFolders, listItems)
+}
+
 // listFoldersFunc and listItemsFunc decouple loadIncludeChain from the
 // Bitwarden CLI wrapper for testing. Production callers inject
 // Client.ListFolders / Client.ListItems.

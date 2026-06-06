@@ -171,10 +171,6 @@ func Run(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := runInteractiveUnlock(ctx, app.TextReporter{Out: os.Stderr, Err: os.Stderr}); err != nil {
-		return fmt.Errorf("tui authentication failed: %w", err)
-	}
-
 	_, err := tea.NewProgram(NewModel(ctx), tea.WithAltScreen()).Run()
 	if err != nil {
 		return fmt.Errorf("tui failed: %w", err)
@@ -268,7 +264,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.selectedFolder = selectFolderIndex(m.folders, previousFolderID, m.selectedFolder)
 		m.applySelectedFolderFromCache()
-		m.status = fmt.Sprintf("Loaded %d folder(s), %d item(s). Selected %s: %d SSH, env %s, %d note(s).", len(m.folders), msg.snapshot.ItemCount, m.resources.Folder.Name, len(m.resources.SSHKeys), yesNo(m.resources.EnvNote != nil), len(m.resources.Notes))
+		m.status = fmt.Sprintf("Loaded %d folder(s), %d item(s). %s", len(m.folders), msg.snapshot.ItemCount, formatFolderStatus(m.resources))
+		return m, nil
+	case folderLoadedMsg:
+		if msg.requestID != m.activeLoadID {
+			return m, nil
+		}
+		m.loading = false
+		m.err = msg.err
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.resourcesByFolderID[msg.folderID] = msg.resources
+		if m.currentFolder != nil && m.currentFolder.ID == msg.folderID {
+			m.resources = msg.resources
+			m.clampSelection()
+		}
+		if m.currentFolder != nil && m.currentFolder.ID == msg.folderID {
+			m.status = fmt.Sprintf("Refreshed %s. %s", m.resources.Folder.Name, formatFolderStatus(m.resources))
+		} else {
+			m.status = "Folder refreshed."
+		}
 		return m, nil
 	case operationResultMsg:
 		m.loading = false
@@ -279,13 +296,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = msg.message
 		m.interaction = interactionNone
-		if msg.reload {
+		switch msg.reloadKind {
+		case reloadVault:
 			m.loading = true
 			m.status = msg.message + " Refreshing vault..."
 			requestID := m.beginLoad()
 			return m, m.loadVaultCmd(requestID)
+		case reloadFolder:
+			if msg.folderID == "" && m.currentFolder != nil {
+				msg.folderID = m.currentFolder.ID
+			}
+			if msg.folderID == "" {
+				return m, nil
+			}
+			m.loading = true
+			m.status = msg.message + " Refreshing folder..."
+			requestID := m.beginLoad()
+			return m, m.loadFolderCmd(requestID, msg.folderID)
+		default:
+			return m, nil
 		}
-		return m, nil
 	case editorFinishedMsg:
 		m.loading = false
 		m.err = msg.err
@@ -408,71 +438,102 @@ func (m Model) loadVaultCmd(requestID uint64) tea.Cmd {
 	}
 }
 
+func (m Model) loadFolderCmd(requestID uint64, folderID string) tea.Cmd {
+	return func() tea.Msg {
+		folder := bwtypes.Folder{ID: folderID}
+		for _, f := range m.folders {
+			if f.ID == folderID {
+				folder = f
+				break
+			}
+		}
+		resources, err := app.BrowseFolderResources(m.ctx, folder, m.reporter)
+		return folderLoadedMsg{requestID: requestID, folderID: folderID, resources: resources, err: err}
+	}
+}
+
 func (m Model) unlockCmd() tea.Cmd {
 	return tea.Exec(unlockExecCommand{ctx: m.ctx, reporter: m.reporter}, func(err error) tea.Msg {
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: "Vault unlocked.", reload: true}
+		return operationResultMsg{message: "Vault unlocked.", reloadKind: reloadVault}
 	})
 }
 
 func (m Model) removeCmd(state confirmState) tea.Cmd {
-	folder := m.folderName()
+	folderName, folderID := folderParams(m.currentFolderOrEmpty())
 	kind := tabKind(state.tab)
 	ids := idsForAction(state.tab, state.item)
 	return func() tea.Msg {
-		result, err := app.Remove(m.ctx, app.RemoveParams{Folder: folder, Kind: kind, IDs: ids}, m.reporter)
+		result, err := app.Remove(m.ctx, app.RemoveParams{Folder: folderName, FolderID: folderID, Kind: kind, IDs: ids}, m.reporter)
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: fmt.Sprintf("Removed %d %s item(s).", result.Removed, kind), reload: true}
+		return operationResultMsg{
+			message:    fmt.Sprintf("Removed %d %s item(s).", result.Removed, kind),
+			reloadKind: reloadFolder,
+			folderID:   folderID,
+		}
 	}
 }
 
 func (m Model) cleanCmd(state confirmState) tea.Cmd {
-	folder := m.folderName()
+	folderName, folderID := folderParams(m.currentFolderOrEmpty())
 	kind := tabKind(state.tab)
 	return func() tea.Msg {
-		result, err := app.Clean(m.ctx, app.CleanParams{Folder: folder, Kind: kind}, m.reporter)
+		result, err := app.Clean(m.ctx, app.CleanParams{Folder: folderName, FolderID: folderID, Kind: kind}, m.reporter)
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: fmt.Sprintf("Cleaned %d %s item(s).", result.Cleaned, kind), reload: true}
+		return operationResultMsg{message: fmt.Sprintf("Cleaned %d %s item(s).", result.Cleaned, kind)}
 	}
 }
 
 func (m Model) getCmd(state confirmState) tea.Cmd {
-	folder := m.folderName()
+	folderName, folderID := folderParams(m.currentFolderOrEmpty())
 	kind := tabKind(state.tab)
 	return func() tea.Msg {
-		result, err := app.Get(m.ctx, app.GetParams{Folder: folder, Kind: kind}, m.reporter)
+		result, err := app.Get(m.ctx, app.GetParams{Folder: folderName, FolderID: folderID, Kind: kind}, m.reporter)
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: getResultMessage(kind, result), reload: true}
+		return operationResultMsg{message: getResultMessage(kind, result)}
 	}
 }
 
 func (m Model) saveEditCmd(state editState, content string) tea.Cmd {
-	folder := m.folderName()
+	folderName, folderID := folderParams(m.currentFolderOrEmpty())
 	return func() tea.Msg {
 		switch state.tab {
 		case tabEnv:
-			result, err := app.AddEnv(m.ctx, app.AddParams{Folder: folder, Content: content}, m.reporter)
+			result, err := app.AddEnv(m.ctx, app.AddParams{Folder: folderName, FolderID: folderID, Content: content}, m.reporter)
 			if err != nil {
 				return operationResultMsg{err: err}
 			}
-			return operationResultMsg{message: fmt.Sprintf("Env note saved (%s).", shortID(result.ItemID)), reload: true}
+			return operationResultMsg{
+				message:    fmt.Sprintf("Env note saved (%s).", shortID(result.ItemID)),
+				reloadKind: reloadFolder,
+				folderID:   folderID,
+			}
 		case tabNotes:
-			result, err := app.EditNote(m.ctx, app.EditParams{Folder: folder, NameOrID: state.item.ID, EditNote: editContent(content)}, m.reporter)
+			result, err := app.EditNote(m.ctx, app.EditParams{
+				Folder:   folderName,
+				FolderID: folderID,
+				NameOrID: state.item.ID,
+				EditNote: editContent(content),
+			}, m.reporter)
 			if err != nil {
 				return operationResultMsg{err: err}
 			}
 			if !result.Updated {
-				return operationResultMsg{message: "No changes made.", reload: false}
+				return operationResultMsg{message: "No changes made."}
 			}
-			return operationResultMsg{message: fmt.Sprintf("Note '%s' saved.", result.Name), reload: true}
+			return operationResultMsg{
+				message:    fmt.Sprintf("Note '%s' saved.", result.Name),
+				reloadKind: reloadFolder,
+				folderID:   folderID,
+			}
 		default:
 			return operationResultMsg{err: fmt.Errorf("%s does not support text editing", tabName(state.tab))}
 		}
@@ -480,14 +541,15 @@ func (m Model) saveEditCmd(state editState, content string) tea.Cmd {
 }
 
 func (m Model) saveSSHWizardCmd(state sshWizardState) tea.Cmd {
-	folder := m.folderName()
+	folderName, folderID := folderParams(m.currentFolderOrEmpty())
 	return func() tea.Msg {
 		publicKey := strings.TrimSpace(state.publicInput.Value())
 		if publicKey == "" {
 			publicKey = state.derivedPub
 		}
 		result, err := app.AddSSHKey(m.ctx, app.AddSSHKeyParams{
-			Folder:      folder,
+			Folder:      folderName,
+			FolderID:    folderID,
 			KeyName:     strings.TrimSpace(state.nameInput.Value()),
 			OpenSSHKey:  state.openSSHKey,
 			PublicKey:   publicKey,
@@ -497,7 +559,11 @@ func (m Model) saveSSHWizardCmd(state sshWizardState) tea.Cmd {
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: fmt.Sprintf("SSH key added (%s).", shortID(result.ItemID)), reload: true}
+		return operationResultMsg{
+			message:    fmt.Sprintf("SSH key added (%s).", shortID(result.ItemID)),
+			reloadKind: reloadFolder,
+			folderID:   folderID,
+		}
 	}
 }
 
@@ -508,12 +574,15 @@ func (m Model) createFolderCmd(state addFolderState) tea.Cmd {
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: fmt.Sprintf("Folder '%s' created.", result.Folder.Name), reload: true}
+		return operationResultMsg{
+			message:    fmt.Sprintf("Folder '%s' created.", result.Folder.Name),
+			reloadKind: reloadVault,
+		}
 	}
 }
 
 func (m Model) addNoteFileCmd(path string) tea.Cmd {
-	folder := m.folderName()
+	folderName, folderID := folderParams(m.currentFolderOrEmpty())
 	return func() tea.Msg {
 		name, err := pathutil.RelativeFileNoteName(path)
 		if err != nil {
@@ -527,11 +596,20 @@ func (m Model) addNoteFileCmd(path string) tea.Cmd {
 		if err != nil {
 			return operationResultMsg{err: fmt.Errorf("read file: %w", err)}
 		}
-		result, err := app.AddNote(m.ctx, app.AddParams{Folder: folder, Name: name, Content: string(data)}, m.reporter)
+		result, err := app.AddNote(m.ctx, app.AddParams{
+			Folder:   folderName,
+			FolderID: folderID,
+			Name:     name,
+			Content:  string(data),
+		}, m.reporter)
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: fmt.Sprintf("Note '%s' added (%s).", name, shortID(result.ItemID)), reload: true}
+		return operationResultMsg{
+			message:    fmt.Sprintf("Note '%s' added (%s).", name, shortID(result.ItemID)),
+			reloadKind: reloadFolder,
+			folderID:   folderID,
+		}
 	}
 }
 
@@ -559,7 +637,7 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 		m.err = nil
 		return *m, nil
 	case focusResources:
-		if len(m.currentItems()) > 0 || m.tab == tabEnv && m.resources.EnvNote != nil {
+		if len(m.currentDisplayItems()) > 0 {
 			m.focus = focusDetail
 		}
 	}
@@ -761,15 +839,28 @@ func (m Model) startEdit() (tea.Model, tea.Cmd) {
 		m.status = "Edit is available for env and note items."
 		return m, nil
 	}
-	item, ok := m.currentItem()
+	display, ok := m.currentDisplayItem()
 	if !ok && m.tab == tabEnv {
-		item = bwtypes.Item{Name: bwtypes.ReservedEnvNoteName}
-		ok = true
+		item := bwtypes.Item{Name: bwtypes.ReservedEnvNoteName}
+		state := editState{tab: m.tab, item: item, content: newTextBuffer("")}
+		m.edit = state
+		m.interaction = interactionNone
+		m.status = fmt.Sprintf("Opening editor for %s.", item.Name)
+		return m, openEditorCmd(state)
 	}
 	if !ok {
 		m.status = "No item selected."
 		return m, nil
 	}
+	if !display.Direct {
+		source := display.SourceFolder
+		if source == "" {
+			source = "source folder"
+		}
+		m.status = fmt.Sprintf("Included item must be edited in folder %q.", source)
+		return m, nil
+	}
+	item := display.Item
 	state := editState{tab: m.tab, item: item, content: newTextBuffer(item.Notes)}
 	m.edit = state
 	m.interaction = interactionNone
@@ -785,15 +876,28 @@ func openEditorCmd(state editState) tea.Cmd {
 }
 
 func (m Model) startRemoveConfirm() (tea.Model, tea.Cmd) {
-	if m.currentFolder == nil || (m.tab == tabEnv && m.resources.EnvNote == nil) {
+	if m.currentFolder == nil {
 		m.status = "No item selected."
 		return m, nil
 	}
-	item, ok := m.currentItem()
+	display, ok := m.currentDisplayItem()
 	if !ok {
 		m.status = "No item selected."
 		return m, nil
 	}
+	if !display.Direct {
+		source := display.SourceFolder
+		if source == "" {
+			source = "source folder"
+		}
+		m.status = fmt.Sprintf("Included item must be removed in folder %q.", source)
+		return m, nil
+	}
+	if m.tab == tabEnv && m.resources.EnvNote == nil {
+		m.status = "No env note in this folder."
+		return m, nil
+	}
+	item := display.Item
 	m.confirm = confirmState{kind: confirmRemove, tab: m.tab, item: item}
 	m.interaction = interactionConfirm
 	m.status = "Confirm remove."
@@ -827,10 +931,10 @@ func (m *Model) moveSelection(delta int) {
 		}
 		m.selectedFolder = clamp(m.selectedFolder+delta, len(m.folders))
 		m.applySelectedFolderFromCache()
-		m.status = fmt.Sprintf("Selected %s: %d SSH, env %s, %d note(s).", m.resources.Folder.Name, len(m.resources.SSHKeys), yesNo(m.resources.EnvNote != nil), len(m.resources.Notes))
+		m.status = formatFolderStatus(m.resources)
 		return
 	}
-	m.selectedItem[m.tab] = clamp(m.selectedItem[m.tab]+delta, len(m.currentItems()))
+	m.selectedItem[m.tab] = clamp(m.selectedItem[m.tab]+delta, len(m.currentDisplayItems()))
 }
 
 func (m *Model) nextTab() {
@@ -847,34 +951,37 @@ func (m *Model) previousTab() {
 	m.clampSelection()
 }
 
-func (m *Model) currentItems() []bwtypes.Item {
-	switch m.tab {
-	case tabSSH:
-		return m.resources.SSHKeys
-	case tabEnv:
-		if m.resources.EnvNote == nil {
-			return nil
-		}
-		return []bwtypes.Item{*m.resources.EnvNote}
-	case tabNotes:
-		return m.resources.Notes
-	default:
-		return nil
+func (m Model) currentFolderOrEmpty() bwtypes.Folder {
+	if m.currentFolder == nil {
+		return bwtypes.Folder{}
 	}
+	return *m.currentFolder
 }
 
-func (m *Model) currentItem() (bwtypes.Item, bool) {
-	items := m.currentItems()
+func (m *Model) currentDisplayItems() []resourceDisplayItem {
+	return displayItemsForTab(m.tab, m.resources)
+}
+
+func (m *Model) currentDisplayItem() (resourceDisplayItem, bool) {
+	items := m.currentDisplayItems()
 	if len(items) == 0 {
-		return bwtypes.Item{}, false
+		return resourceDisplayItem{}, false
 	}
 	idx := clamp(m.selectedItem[m.tab], len(items))
 	return items[idx], true
 }
 
+func (m *Model) currentItem() (bwtypes.Item, bool) {
+	display, ok := m.currentDisplayItem()
+	if !ok {
+		return bwtypes.Item{}, false
+	}
+	return display.Item, true
+}
+
 func (m *Model) clampSelection() {
 	m.selectedFolder = clamp(m.selectedFolder, len(m.folders))
-	m.selectedItem[m.tab] = clamp(m.selectedItem[m.tab], len(m.currentItems()))
+	m.selectedItem[m.tab] = clamp(m.selectedItem[m.tab], len(m.currentDisplayItems()))
 }
 
 func (m *Model) beginLoad() uint64 {
@@ -1240,9 +1347,3 @@ func clamp(value, size int) int {
 	return value
 }
 
-func yesNo(ok bool) string {
-	if ok {
-		return "yes"
-	}
-	return "none"
-}

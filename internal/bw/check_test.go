@@ -62,6 +62,7 @@ func TestParseBWVersion(t *testing.T) {
 }
 
 func TestCheckBWInstalledReturnsMissingBinaryError(t *testing.T) {
+	resetBWInstalledCacheForTest()
 	err := checkBWInstalled(func(string) (string, error) {
 		return "", exec.ErrNotFound
 	}, nil, io.Discard)
@@ -74,6 +75,7 @@ func TestCheckBWInstalledReturnsMissingBinaryError(t *testing.T) {
 }
 
 func TestCheckBWInstalledReturnsVersionProbeFailure(t *testing.T) {
+	resetBWInstalledCacheForTest()
 	logPath := filepath.Join(t.TempDir(), "bw.log")
 	err := checkBWInstalled(
 		func(string) (string, error) { return "/usr/local/bin/bw", nil },
@@ -95,6 +97,7 @@ func TestCheckBWInstalledReturnsVersionProbeFailure(t *testing.T) {
 }
 
 func TestCheckBWInstalledReturnsMalformedVersionOutputError(t *testing.T) {
+	resetBWInstalledCacheForTest()
 	logPath := filepath.Join(t.TempDir(), "bw.log")
 	err := checkBWInstalled(
 		func(string) (string, error) { return "/usr/local/bin/bw", nil },

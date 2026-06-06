@@ -8,9 +8,20 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/shichao402/pkv/internal/diag"
 )
+
+var (
+	bwInstalledOnce sync.Once
+	bwInstalledErr  error
+)
+
+func resetBWInstalledCacheForTest() {
+	bwInstalledOnce = sync.Once{}
+	bwInstalledErr = nil
+}
 
 var bwVersionPattern = regexp.MustCompile(`\bv?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b`)
 
@@ -21,6 +32,13 @@ func CheckBWInstalled() error {
 }
 
 func checkBWInstalled(lookPath func(string) (string, error), execCommand execCommandFunc, stdout io.Writer) error {
+	bwInstalledOnce.Do(func() {
+		bwInstalledErr = checkBWInstalledUncached(lookPath, execCommand, stdout)
+	})
+	return bwInstalledErr
+}
+
+func checkBWInstalledUncached(lookPath func(string) (string, error), execCommand execCommandFunc, stdout io.Writer) error {
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}

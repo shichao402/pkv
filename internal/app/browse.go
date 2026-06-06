@@ -6,6 +6,9 @@ import (
 
 	"github.com/shichao402/pkv/internal/bw"
 	bwtypes "github.com/shichao402/pkv/internal/bw/types"
+	"github.com/shichao402/pkv/internal/env"
+	"github.com/shichao402/pkv/internal/include"
+	"github.com/shichao402/pkv/internal/note"
 )
 
 type BrowseResources struct {
@@ -14,6 +17,15 @@ type BrowseResources struct {
 	SSHKeys []bwtypes.Item
 	EnvNote *bwtypes.Item
 	Notes   []bwtypes.Item
+
+	// Resolved pkv.include view (env/note merged across chain).
+	DirectIncludes []string
+	IncludeChain   []string
+	ResolveErr     error
+	ResolvedEnv    []env.SourcedEnvVar
+	EnvConflicts   []env.EnvConflict
+	ResolvedNotes  []note.SourcedNote
+	NoteConflicts  []note.NoteConflict
 }
 
 type BrowseSnapshot struct {
@@ -61,6 +73,62 @@ func SplitBrowseResources(folder bwtypes.Folder, items []bwtypes.Item) (BrowseRe
 		result.EnvNote = &envNote
 	}
 	return result, nil
+}
+
+func enrichBrowseResourcesResolved(
+	res BrowseResources,
+	folders []bwtypes.Folder,
+	itemsByFolderID map[string][]bwtypes.Item,
+) BrowseResources {
+	includeItem, hasInclude, err := include.FindIncludeNote(res.Items)
+	if err != nil {
+		res.ResolveErr = err
+		return res
+	}
+	if hasInclude {
+		res.DirectIncludes = include.ParseLines(includeItem.Notes)
+	}
+
+	chainFolders, err := bw.LoadIncludeChainFromVault(res.Folder.Name, folders, itemsByFolderID)
+	if err != nil {
+		res.ResolveErr = err
+		return res
+	}
+	chainNames := make([]string, len(chainFolders))
+	for i, f := range chainFolders {
+		chainNames[i] = f.Name
+	}
+	res.IncludeChain = chainNames
+
+	notesByFolder := make(map[string]string, len(chainFolders))
+	itemsByName := make(map[string][]bwtypes.Item, len(chainFolders))
+	for _, f := range chainFolders {
+		chainItems := itemsByFolderID[f.ID]
+		itemsByName[f.Name] = bw.FilterConfigNotes(chainItems)
+		envNote, found, envErr := bw.FindManagedEnvNote(chainItems)
+		if envErr != nil {
+			res.ResolveErr = envErr
+			return res
+		}
+		if found {
+			notesByFolder[f.Name] = envNote.Notes
+		}
+	}
+
+	if len(notesByFolder) > 0 {
+		envResult, mergeErr := env.MergePkvEnvNotes(chainNames, notesByFolder)
+		if mergeErr != nil {
+			res.ResolveErr = mergeErr
+			return res
+		}
+		res.ResolvedEnv = envResult.Vars
+		res.EnvConflicts = envResult.Conflicts
+	}
+
+	merged := note.MergeNoteItems(chainNames, itemsByName)
+	res.ResolvedNotes = merged.Items
+	res.NoteConflicts = merged.Conflicts
+	return res
 }
 
 func browseFoldersWithClient(ctx context.Context, client browseClient, r Reporter) ([]bwtypes.Folder, error) {
@@ -135,7 +203,17 @@ func browseFolderResourcesWithClient(ctx context.Context, client browseClient, f
 	if err != nil {
 		return BrowseResources{}, fmt.Errorf("list items failed: %w", err)
 	}
-	return SplitBrowseResources(folder, items)
+	resources, err := SplitBrowseResources(folder, items)
+	if err != nil {
+		return BrowseResources{}, err
+	}
+
+	folders, err := client.ListFolders(session)
+	if err != nil {
+		return BrowseResources{}, fmt.Errorf("list folders failed: %w", err)
+	}
+	itemsByFolderID := map[string][]bwtypes.Item{folderID: items}
+	return enrichBrowseResourcesResolved(resources, folders, itemsByFolderID), nil
 }
 
 func browseVaultSnapshotWithClient(ctx context.Context, client browseClient, r Reporter) (BrowseSnapshot, error) {
@@ -190,7 +268,7 @@ func browseVaultSnapshotWithClient(ctx context.Context, client browseClient, r R
 		if err != nil {
 			return BrowseSnapshot{}, fmt.Errorf("folder %q: %w", folder.Name, err)
 		}
-		resourcesByFolderID[folder.ID] = resources
+		resourcesByFolderID[folder.ID] = enrichBrowseResourcesResolved(resources, folders, itemsByFolderID)
 	}
 
 	return BrowseSnapshot{

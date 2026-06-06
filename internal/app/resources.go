@@ -229,6 +229,7 @@ func listFolder(ctx context.Context, params ListParams, r Reporter) (ListResult,
 
 type GetParams struct {
 	Folder       string
+	FolderID     string
 	Kind         string
 	AuthorizeSSH bool
 }
@@ -311,7 +312,7 @@ func GetSSH(ctx context.Context, params GetParams, r Reporter) (GetResult, error
 	}
 
 	r.Infof("Looking up folder '%s'...\n", folder)
-	folderID, err := client.GetFolderID(session, folder)
+	folderID, err := resolveFolderID(client, session, folder, params.FolderID)
 	if err != nil {
 		return GetResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -607,8 +608,9 @@ func GetNote(ctx context.Context, params GetParams, r Reporter) (GetResult, erro
 }
 
 type AddParams struct {
-	Folder string
-	Kind   string
+	Folder   string
+	FolderID string
+	Kind     string
 
 	SSH     AddSSHKeyParams
 	Name    string
@@ -623,6 +625,7 @@ type AddResult struct {
 
 type AddSSHKeyParams struct {
 	Folder      string
+	FolderID    string
 	KeyName     string
 	OpenSSHKey  string
 	PublicKey   string
@@ -728,7 +731,7 @@ func AddSSHKey(ctx context.Context, params AddSSHKeyParams, r Reporter) (AddResu
 		return AddResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -773,7 +776,7 @@ func AddEnv(ctx context.Context, params AddParams, r Reporter) (AddResult, error
 		return AddResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -824,7 +827,7 @@ func AddNote(ctx context.Context, params AddParams, r Reporter) (AddResult, erro
 		return AddResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -841,6 +844,7 @@ type EditSecureNoteFunc func(client *bw.Client, session string, item bwtypes.Ite
 
 type EditParams struct {
 	Folder   string
+	FolderID string
 	Kind     string
 	NameOrID string
 	EditNote EditSecureNoteFunc
@@ -883,7 +887,7 @@ func EditEnv(ctx context.Context, params EditParams, r Reporter) (EditResult, er
 		return EditResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return EditResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -931,7 +935,7 @@ func EditNote(ctx context.Context, params EditParams, r Reporter) (EditResult, e
 		return EditResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return EditResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -957,9 +961,10 @@ func EditNote(ctx context.Context, params EditParams, r Reporter) (EditResult, e
 }
 
 type RemoveParams struct {
-	Folder string
-	Kind   string
-	IDs    []string
+	Folder   string
+	FolderID string
+	Kind     string
+	IDs      []string
 }
 
 type RemoveResult struct{ Removed int }
@@ -993,7 +998,7 @@ func RemoveSSH(ctx context.Context, params RemoveParams, r Reporter) (RemoveResu
 		return RemoveResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return RemoveResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -1071,7 +1076,7 @@ func RemoveEnv(ctx context.Context, params RemoveParams, r Reporter) (RemoveResu
 		return RemoveResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return RemoveResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -1130,7 +1135,7 @@ func RemoveNote(ctx context.Context, params RemoveParams, r Reporter) (RemoveRes
 		return RemoveResult{}, fmt.Errorf("sync failed: %w", err)
 	}
 	r.Infof("Looking up folder '%s'...\n", params.Folder)
-	folderID, err := client.GetFolderID(session, params.Folder)
+	folderID, err := resolveFolderID(client, session, params.Folder, params.FolderID)
 	if err != nil {
 		return RemoveResult{}, fmt.Errorf("folder lookup failed: %w", err)
 	}
@@ -1185,8 +1190,9 @@ func RemoveNote(ctx context.Context, params RemoveParams, r Reporter) (RemoveRes
 }
 
 type CleanParams struct {
-	Folder string
-	Kind   string
+	Folder   string
+	FolderID string
+	Kind     string
 }
 
 type CleanResult struct{ Cleaned int }
@@ -1318,6 +1324,13 @@ func CleanNote(ctx context.Context, params CleanParams, r Reporter) (CleanResult
 	}
 	r.Infof("Cleaned %d note(s) for folder '%s' in %s.\n", cleaned, params.Folder, cwd)
 	return CleanResult{Cleaned: cleaned}, nil
+}
+
+func resolveFolderID(client *bw.Client, session, folderName, folderID string) (string, error) {
+	if strings.TrimSpace(folderID) != "" {
+		return folderID, nil
+	}
+	return client.GetFolderID(session, folderName)
 }
 
 func sanitizeSSHKeyName(name string) string {

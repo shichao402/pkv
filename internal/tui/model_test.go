@@ -9,6 +9,7 @@ import (
 
 	"github.com/shichao402/pkv/internal/app"
 	bwtypes "github.com/shichao402/pkv/internal/bw/types"
+	"github.com/shichao402/pkv/internal/note"
 )
 
 func TestUpdateVaultLoadedSelectsFirstFolder(t *testing.T) {
@@ -107,6 +108,32 @@ func TestUpdateKeySwitchesResourceTabs(t *testing.T) {
 	got = updated.(Model)
 	if got.tab != tabNotes {
 		t.Fatalf("tab = %v, want notes", got.tab)
+	}
+}
+
+func TestViewRendersResolvedIncludeNotes(t *testing.T) {
+	model := NewModel(t.Context())
+	folder := bwtypes.Folder{ID: "root-id", Name: "root"}
+	model.loading = false
+	model.folders = []bwtypes.Folder{folder}
+	model.currentFolder = &folder
+	model.tab = tabNotes
+	model.focus = focusResources
+	model.resources = app.BrowseResources{
+		Folder:         folder,
+		DirectIncludes: []string{"shared"},
+		IncludeChain:   []string{"root", "shared"},
+		ResolvedNotes: []note.SourcedNote{{
+			Item:   bwtypes.Item{ID: "note-1", Type: bwtypes.ItemTypeSecureNote, Name: "app.conf", Notes: "x: 1"},
+			Source: "shared",
+		}},
+	}
+
+	view := model.View()
+	for _, want := range []string{"Includes:", "root -> shared", "app.conf", "[from: shared]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() missing %q in %q", want, view)
+		}
 	}
 }
 
@@ -466,7 +493,7 @@ func TestOperationResultReloadsVault(t *testing.T) {
 	model := readyModel()
 	oldLoadID := model.activeLoadID
 
-	updated, cmd := model.Update(operationResultMsg{message: "saved", reload: true})
+	updated, cmd := model.Update(operationResultMsg{message: "saved", reloadKind: reloadVault})
 	got := updated.(Model)
 	if !got.loading {
 		t.Fatal("loading = false, want true while vault reloads")
@@ -476,6 +503,47 @@ func TestOperationResultReloadsVault(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("cmd = nil, want vault reload command")
+	}
+}
+
+func TestOperationResultGetDoesNotReload(t *testing.T) {
+	model := readyModel()
+	oldLoadID := model.activeLoadID
+
+	updated, cmd := model.Update(operationResultMsg{message: "Synced 2 note(s)."})
+	got := updated.(Model)
+	if got.loading {
+		t.Fatal("loading = true, want false after get")
+	}
+	if got.activeLoadID != oldLoadID {
+		t.Fatalf("activeLoadID = %d, want unchanged %d", got.activeLoadID, oldLoadID)
+	}
+	if cmd != nil {
+		t.Fatal("cmd != nil, want no reload after get")
+	}
+	if got.status != "Synced 2 note(s)." {
+		t.Fatalf("status = %q, want get success message preserved", got.status)
+	}
+}
+
+func TestOperationResultReloadsFolderOnly(t *testing.T) {
+	model := readyModel()
+	oldLoadID := model.activeLoadID
+
+	updated, cmd := model.Update(operationResultMsg{
+		message:    "Note saved.",
+		reloadKind: reloadFolder,
+		folderID:   "folder-1",
+	})
+	got := updated.(Model)
+	if !got.loading {
+		t.Fatal("loading = false, want true while folder reloads")
+	}
+	if got.activeLoadID == oldLoadID {
+		t.Fatalf("activeLoadID = %d, want a new load id", got.activeLoadID)
+	}
+	if cmd == nil {
+		t.Fatal("cmd = nil, want folder reload command")
 	}
 }
 

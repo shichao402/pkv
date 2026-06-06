@@ -165,7 +165,16 @@ func renderResources(m Model) string {
 		return b.String()
 	}
 
-	items := m.currentItems()
+	if banner := includeBanner(m.resources); banner != "" && m.tab != tabSSH {
+		b.WriteString(banner)
+		b.WriteString("\n\n")
+	}
+	if hint := sshIncludeHint(m.resources); hint != "" && m.tab == tabSSH {
+		b.WriteString(hint)
+		b.WriteString("\n\n")
+	}
+
+	items := m.currentDisplayItems()
 	if len(items) == 0 {
 		b.WriteString(subtleStyle.Render(fmt.Sprintf("No %s items.", strings.ToLower(tabName(m.tab)))))
 		return b.String()
@@ -173,7 +182,7 @@ func renderResources(m Model) string {
 
 	selected := m.selectedItem[m.tab]
 	for i, item := range items {
-		b.WriteString(renderSelectableLine(renderResourceLine(item), i == selected, active))
+		b.WriteString(renderSelectableLine(formatResourceLine(item), i == selected, active))
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -196,16 +205,22 @@ func renderTabs(active resourceTab, paneActive bool) string {
 }
 
 func renderDetail(m Model) string {
-	item, ok := m.currentItem()
+	display, ok := m.currentDisplayItem()
 	if !ok {
 		return subtleStyle.Render("No item selected.")
 	}
+	item := display.Item
 
 	var b strings.Builder
 	b.WriteString(focusedStyle.Render(tabName(m.tab) + " Detail"))
 	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "Name: %s\n", item.Name)
-	fmt.Fprintf(&b, "ID:   %s\n", item.ID)
+	if item.ID != "" {
+		fmt.Fprintf(&b, "ID:   %s\n", item.ID)
+	}
+	if display.SourceFolder != "" && !display.Direct {
+		fmt.Fprintf(&b, "From: %s\n", display.SourceFolder)
+	}
 
 	switch m.tab {
 	case tabSSH:
@@ -217,6 +232,9 @@ func renderDetail(m Model) string {
 			b.WriteString("\n")
 		}
 	case tabEnv:
+		if display.SourceFolder != "" && !display.Direct {
+			fmt.Fprintf(&b, "Source folder: %s\n", display.SourceFolder)
+		}
 		keys := envKeys(item.Notes)
 		fmt.Fprintf(&b, "Keys: %d\n", len(keys))
 		for _, key := range keys {
@@ -225,6 +243,9 @@ func renderDetail(m Model) string {
 			b.WriteString("\n")
 		}
 	case tabNotes:
+		if display.SourceFolder != "" && !display.Direct {
+			fmt.Fprintf(&b, "Source folder: %s\n", display.SourceFolder)
+		}
 		fmt.Fprintf(&b, "Lines: %d\n", countLines(item.Notes))
 		b.WriteString("Preview:\n")
 		b.WriteString(indent(truncate(item.Notes, 240)))

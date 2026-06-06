@@ -48,6 +48,93 @@ func TestSplitBrowseResourcesRejectsMultipleEnvNotes(t *testing.T) {
 	}
 }
 
+func TestEnrichBrowseResourcesResolvedThinProject(t *testing.T) {
+	folders := []bwtypes.Folder{
+		{ID: "root-id", Name: "root"},
+		{ID: "shared-id", Name: "shared"},
+	}
+	itemsByFolderID := map[string][]bwtypes.Item{
+		"root-id": {
+			{ID: "inc-1", Type: bwtypes.ItemTypeSecureNote, Name: bwtypes.ReservedIncludeNoteName, Notes: "shared\n"},
+		},
+		"shared-id": {
+			{ID: "env-1", Type: bwtypes.ItemTypeSecureNote, Name: bwtypes.ReservedEnvNoteName, Notes: "API_TOKEN=secret\n"},
+			{ID: "note-1", Type: bwtypes.ItemTypeSecureNote, Name: "app.conf", Notes: "debug=true"},
+		},
+	}
+
+	direct, err := SplitBrowseResources(folders[0], itemsByFolderID["root-id"])
+	if err != nil {
+		t.Fatalf("SplitBrowseResources returned error: %v", err)
+	}
+	got := enrichBrowseResourcesResolved(direct, folders, itemsByFolderID)
+
+	if len(got.DirectIncludes) != 1 || got.DirectIncludes[0] != "shared" {
+		t.Fatalf("DirectIncludes = %v, want [shared]", got.DirectIncludes)
+	}
+	if len(got.IncludeChain) != 2 || got.IncludeChain[0] != "root" || got.IncludeChain[1] != "shared" {
+		t.Fatalf("IncludeChain = %v, want [root shared]", got.IncludeChain)
+	}
+	if got.ResolveErr != nil {
+		t.Fatalf("ResolveErr = %v, want nil", got.ResolveErr)
+	}
+	if len(got.ResolvedEnv) != 1 || got.ResolvedEnv[0].Key != "API_TOKEN" || got.ResolvedEnv[0].Source != "shared" {
+		t.Fatalf("ResolvedEnv = %+v, want API_TOKEN from shared", got.ResolvedEnv)
+	}
+	if len(got.ResolvedNotes) != 1 || got.ResolvedNotes[0].Item.Name != "app.conf" || got.ResolvedNotes[0].Source != "shared" {
+		t.Fatalf("ResolvedNotes = %+v, want app.conf from shared", got.ResolvedNotes)
+	}
+}
+
+func TestEnrichBrowseResourcesResolvedRecordsMissingInclude(t *testing.T) {
+	folders := []bwtypes.Folder{{ID: "root-id", Name: "root"}}
+	itemsByFolderID := map[string][]bwtypes.Item{
+		"root-id": {
+			{ID: "inc-1", Type: bwtypes.ItemTypeSecureNote, Name: bwtypes.ReservedIncludeNoteName, Notes: "missing\n"},
+		},
+	}
+	direct, err := SplitBrowseResources(folders[0], itemsByFolderID["root-id"])
+	if err != nil {
+		t.Fatalf("SplitBrowseResources returned error: %v", err)
+	}
+	got := enrichBrowseResourcesResolved(direct, folders, itemsByFolderID)
+	if got.ResolveErr == nil {
+		t.Fatal("ResolveErr = nil, want missing-folder error")
+	}
+	if !strings.Contains(got.ResolveErr.Error(), "missing folders") {
+		t.Fatalf("ResolveErr = %v, want missing folders", got.ResolveErr)
+	}
+}
+
+func TestBrowseVaultSnapshotResolvesIncludeAcrossFolders(t *testing.T) {
+	client := &fakeBrowseClient{
+		folders: []bwtypes.Folder{
+			{ID: "root-id", Name: "root"},
+			{ID: "shared-id", Name: "shared"},
+		},
+		allItems: []bwtypes.Item{
+			{ID: "inc-1", FolderID: "root-id", Type: bwtypes.ItemTypeSecureNote, Name: bwtypes.ReservedIncludeNoteName, Notes: "shared\n"},
+			{ID: "env-1", FolderID: "shared-id", Type: bwtypes.ItemTypeSecureNote, Name: bwtypes.ReservedEnvNoteName, Notes: "FOO=bar\n"},
+			{ID: "note-1", FolderID: "shared-id", Type: bwtypes.ItemTypeSecureNote, Name: "cfg.yml", Notes: "x: 1"},
+		},
+	}
+
+	got, err := browseVaultSnapshotWithClient(context.Background(), client, nil)
+	if err != nil {
+		t.Fatalf("browseVaultSnapshotWithClient returned error: %v", err)
+	}
+	root := got.ResourcesByFolderID["root-id"]
+	if len(root.ResolvedEnv) != 1 {
+		t.Fatalf("root ResolvedEnv = %+v, want 1 key", root.ResolvedEnv)
+	}
+	if root.ResolvedEnv[0].Key != "FOO" {
+		t.Fatalf("ResolvedEnv key = %q, want FOO", root.ResolvedEnv[0].Key)
+	}
+	if len(root.ResolvedNotes) != 1 || root.ResolvedNotes[0].Item.Name != "cfg.yml" {
+		t.Fatalf("root ResolvedNotes = %+v, want cfg.yml", root.ResolvedNotes)
+	}
+}
+
 func TestBrowseVaultSnapshotGroupsItemsByFolderID(t *testing.T) {
 	client := &fakeBrowseClient{
 		folders: []bwtypes.Folder{
