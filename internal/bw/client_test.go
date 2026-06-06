@@ -342,9 +342,37 @@ func TestEnsureUnlockedRefreshesExpiredExportedSession(t *testing.T) {
 		"bw --version|env=expired-session",
 		"bw --nointeraction --session expired-session list folders|env=expired-session",
 		"bw --nointeraction status|env=",
-		"bw unlock --raw|env=",
+		"bw --raw unlock|env=",
+		"bw --nointeraction --session fresh-session list folders|env=fresh-session",
 	}) {
 		t.Fatalf("bw calls = %#v", got)
+	}
+}
+
+func TestParseUnlockSessionUsesLastField(t *testing.T) {
+	got, err := parseUnlockSession([]byte("? Master password: fresh-session\n"))
+	if err != nil {
+		t.Fatalf("parseUnlockSession() error = %v, want nil", err)
+	}
+	if got != "fresh-session" {
+		t.Fatalf("parseUnlockSession() = %q, want fresh-session", got)
+	}
+}
+
+func TestParseUnlockSessionStripsANSISequences(t *testing.T) {
+	got, err := parseUnlockSession([]byte("\x1b[?25h" + "fresh-session" + "\x1b[?25l\n"))
+	if err != nil {
+		t.Fatalf("parseUnlockSession() error = %v, want nil", err)
+	}
+	if got != "fresh-session" {
+		t.Fatalf("parseUnlockSession() = %q, want fresh-session", got)
+	}
+}
+
+func TestParseUnlockSessionRejectsEmptyOutput(t *testing.T) {
+	_, err := parseUnlockSession([]byte(" \n\t"))
+	if err == nil || !strings.Contains(err.Error(), "empty session") {
+		t.Fatalf("parseUnlockSession() error = %v, want empty session", err)
 	}
 }
 
@@ -560,8 +588,11 @@ func TestClientHelperProcess(t *testing.T) {
 		case "--nointeraction status":
 			_, _ = fmt.Fprint(os.Stdout, `{"status":"locked","userEmail":"dev@example.com"}`)
 			os.Exit(0)
-		case "unlock --raw":
+		case "--raw unlock":
 			_, _ = fmt.Fprint(os.Stdout, "fresh-session\n")
+			os.Exit(0)
+		case "--nointeraction --session fresh-session list folders":
+			_, _ = fmt.Fprint(os.Stdout, `[{"id":"folder-1","name":"dev"}]`)
 			os.Exit(0)
 		}
 	case "exported_session_network_error":

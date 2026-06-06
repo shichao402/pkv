@@ -137,8 +137,7 @@ func browseFoldersWithClient(ctx context.Context, client browseClient, r Reporte
 		return nil, err
 	}
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -171,8 +170,7 @@ func browseFolderResourcesWithClient(ctx context.Context, client browseClient, f
 		return BrowseResources{}, fmt.Errorf("folder id or name is required")
 	}
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return BrowseResources{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -222,8 +220,7 @@ func browseVaultSnapshotWithClient(ctx context.Context, client browseClient, r R
 		return BrowseSnapshot{}, err
 	}
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return BrowseSnapshot{}, fmt.Errorf("authentication failed: %w", err)
 	}

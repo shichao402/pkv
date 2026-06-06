@@ -41,6 +41,7 @@ type folderLoadedMsg struct {
 
 type operationResultMsg struct {
 	message    string
+	session    string
 	reloadKind reloadKind
 	folderID   string
 	err        error

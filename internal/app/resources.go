@@ -43,8 +43,7 @@ func List(ctx context.Context, params ListParams, r Reporter) (ListResult, error
 func listFolders(ctx context.Context, r Reporter) (ListResult, error) {
 	client := bw.NewClient()
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return ListResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -82,8 +81,7 @@ func listFolder(ctx context.Context, params ListParams, r Reporter) (ListResult,
 	folder := params.Folder
 	client := bw.NewClient()
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return ListResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -297,8 +295,7 @@ func GetSSH(ctx context.Context, params GetParams, r Reporter) (GetResult, error
 	folder := params.Folder
 	client := bw.NewClient()
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return GetResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -411,8 +408,7 @@ func GetEnv(ctx context.Context, params GetParams, r Reporter) (GetResult, error
 	folder := params.Folder
 	client := bw.NewClient()
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return GetResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -529,8 +525,7 @@ func GetNote(ctx context.Context, params GetParams, r Reporter) (GetResult, erro
 	folder := params.Folder
 	client := bw.NewClient()
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return GetResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -663,8 +658,7 @@ func addFolderWithClient(ctx context.Context, client addFolderClient, params Add
 		return AddFolderResult{}, err
 	}
 
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return AddFolderResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -718,8 +712,7 @@ func Add(ctx context.Context, params AddParams, r Reporter) (AddResult, error) {
 func AddSSHKey(ctx context.Context, params AddSSHKeyParams, r Reporter) (AddResult, error) {
 	r = reporterOrNoop(r)
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -763,8 +756,7 @@ func AddSSHKey(ctx context.Context, params AddSSHKeyParams, r Reporter) (AddResu
 func AddEnv(ctx context.Context, params AddParams, r Reporter) (AddResult, error) {
 	r = reporterOrNoop(r)
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -814,8 +806,7 @@ func AddNote(ctx context.Context, params AddParams, r Reporter) (AddResult, erro
 		return AddResult{}, fmt.Errorf("note name '%s' is reserved for folder env data", bwtypes.ReservedEnvNoteName)
 	}
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return AddResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -874,8 +865,7 @@ func EditEnv(ctx context.Context, params EditParams, r Reporter) (EditResult, er
 		editFn = securenote.Edit
 	}
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return EditResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -922,8 +912,7 @@ func EditNote(ctx context.Context, params EditParams, r Reporter) (EditResult, e
 		editFn = securenote.Edit
 	}
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return EditResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -985,8 +974,7 @@ func Remove(ctx context.Context, params RemoveParams, r Reporter) (RemoveResult,
 func RemoveSSH(ctx context.Context, params RemoveParams, r Reporter) (RemoveResult, error) {
 	r = reporterOrNoop(r)
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return RemoveResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -1063,8 +1051,7 @@ func RemoveSSH(ctx context.Context, params RemoveParams, r Reporter) (RemoveResu
 func RemoveEnv(ctx context.Context, params RemoveParams, r Reporter) (RemoveResult, error) {
 	r = reporterOrNoop(r)
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return RemoveResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -1122,8 +1109,7 @@ func RemoveEnv(ctx context.Context, params RemoveParams, r Reporter) (RemoveResu
 func RemoveNote(ctx context.Context, params RemoveParams, r Reporter) (RemoveResult, error) {
 	r = reporterOrNoop(r)
 	client := bw.NewClient()
-	r.Info("Authenticating with Bitwarden...")
-	session, err := client.EnsureUnlocked()
+	session, err := ensureBitwardenSession(ctx, client, r)
 	if err != nil {
 		return RemoveResult{}, fmt.Errorf("authentication failed: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/shichao402/pkv/internal/bw/types"
@@ -14,6 +15,8 @@ import (
 
 type execCommandFunc func(name string, args ...string) *exec.Cmd
 type lookPathFunc func(file string) (string, error)
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 
 type Client struct {
 	execCommand execCommandFunc
@@ -349,16 +352,16 @@ func (c *Client) login() error {
 
 func (c *Client) unlock() (string, error) {
 	diag.Printf("running interactive bw unlock")
-	cmd := c.command("unlock", "--raw")
+	cmd := c.command("--raw", "unlock")
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("bw unlock failed: %w", err)
 	}
-	session := strings.TrimSpace(string(out))
-	if session == "" {
-		return "", fmt.Errorf("bw unlock returned empty session")
+	session, err := parseUnlockSession(out)
+	if err != nil {
+		return "", err
 	}
 	diag.Printf("bw unlock returned session %s", diag.RedactSecret(session))
 	return session, nil
@@ -371,7 +374,28 @@ func (c *Client) unlockAndCache() (string, error) {
 	}
 	_ = os.Setenv("BW_SESSION", session)
 	diag.Printf("cached BW_SESSION in current process: %s", diag.RedactSecret(session))
+	if err := c.validateSession(session); err != nil {
+		_ = os.Unsetenv("BW_SESSION")
+		return "", fmt.Errorf("validate unlocked BW_SESSION: %w", err)
+	}
 	return session, nil
+}
+
+func parseUnlockSession(out []byte) (string, error) {
+	cleaned := stripUnlockOutputDecorations(string(out))
+	fields := strings.Fields(cleaned)
+	diag.Printf("bw unlock stdout: bytes=%d cleaned_bytes=%d fields=%d", len(out), len(cleaned), len(fields))
+	for i, field := range fields {
+		diag.Printf("bw unlock stdout field[%d]=%s", i, diag.RedactSecret(field))
+	}
+	if len(fields) == 0 {
+		return "", fmt.Errorf("bw unlock returned empty session")
+	}
+	return fields[len(fields)-1], nil
+}
+
+func stripUnlockOutputDecorations(output string) string {
+	return ansiEscapePattern.ReplaceAllString(output, "")
 }
 
 func (c *Client) run(session string, args ...string) (string, error) {

@@ -85,9 +85,10 @@ type keyMap struct {
 }
 
 type confirmState struct {
-	kind confirmKind
-	tab  resourceTab
-	item bwtypes.Item
+	kind         confirmKind
+	tab          resourceTab
+	resourceKind string
+	item         bwtypes.Item
 }
 
 type editState struct {
@@ -175,10 +176,11 @@ func Run(ctx context.Context) error {
 }
 
 var (
-	runStartupUnlock = func(ctx context.Context) error {
+	runStartupUnlock = func(ctx context.Context) (string, error) {
 		return runInteractiveUnlock(ctx, app.TextReporter{Out: os.Stderr, Err: os.Stderr})
 	}
-	runTeaProgram = func(model Model) error {
+	validateStartupSession = app.ValidateBitwardenSession
+	runTeaProgram          = func(model Model) error {
 		_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 		return err
 	}
@@ -186,16 +188,23 @@ var (
 
 func runWithDependencies(
 	ctx context.Context,
-	unlock func(context.Context) error,
+	unlock func(context.Context) (string, error),
 	runProgram func(Model) error,
 ) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if unlock != nil {
-		if err := unlock(ctx); err != nil {
+		session, err := unlock(ctx)
+		if err != nil {
 			return err
 		}
+		if validateStartupSession != nil {
+			if err := validateStartupSession(ctx, session); err != nil {
+				return err
+			}
+		}
+		ctx = app.WithBitwardenSession(ctx, session)
 	}
 	err := runProgram(NewModel(ctx))
 	if err != nil {
@@ -204,19 +213,25 @@ func runWithDependencies(
 	return nil
 }
 
-func runInteractiveUnlock(ctx context.Context, reporter app.Reporter) error {
+func runInteractiveUnlock(ctx context.Context, reporter app.Reporter) (string, error) {
 	_, _ = fmt.Fprintln(os.Stderr, "Checking Bitwarden unlock state. If bw asks for your master password, input is hidden; type it and press Enter.")
-	_, err := app.Unlock(ctx, app.UnlockParams{}, reporter)
-	return err
+	result, err := app.Unlock(ctx, app.UnlockParams{}, reporter)
+	if err != nil {
+		return "", err
+	}
+	return result.Session, nil
 }
 
 type unlockExecCommand struct {
 	ctx      context.Context
 	reporter app.Reporter
+	session  string
 }
 
-func (c unlockExecCommand) Run() error {
-	return runInteractiveUnlock(c.ctx, c.reporter)
+func (c *unlockExecCommand) Run() error {
+	session, err := runInteractiveUnlock(c.ctx, c.reporter)
+	c.session = session
+	return err
 }
 
 func (unlockExecCommand) SetStdin(io.Reader)  {}
@@ -322,6 +337,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.status = msg.message
 		m.interaction = interactionNone
+		if msg.session != "" {
+			m.ctx = app.WithBitwardenSession(m.ctx, msg.session)
+		}
 		switch msg.reloadKind {
 		case reloadVault:
 			m.loading = true
@@ -479,11 +497,12 @@ func (m Model) loadFolderCmd(requestID uint64, folderID string) tea.Cmd {
 }
 
 func (m Model) unlockCmd() tea.Cmd {
-	return tea.Exec(unlockExecCommand{ctx: m.ctx, reporter: m.reporter}, func(err error) tea.Msg {
+	unlock := &unlockExecCommand{ctx: m.ctx, reporter: m.reporter}
+	return tea.Exec(unlock, func(err error) tea.Msg {
 		if err != nil {
 			return operationResultMsg{err: err}
 		}
-		return operationResultMsg{message: "Vault unlocked.", reloadKind: reloadVault}
+		return operationResultMsg{message: "Vault unlocked.", session: unlock.session, reloadKind: reloadVault}
 	})
 }
 
@@ -518,7 +537,10 @@ func (m Model) cleanCmd(state confirmState) tea.Cmd {
 
 func (m Model) getCmd(state confirmState) tea.Cmd {
 	folderName, folderID := folderParams(m.currentFolderOrEmpty())
-	kind := tabKind(state.tab)
+	kind := state.resourceKind
+	if kind == "" {
+		kind = tabKind(state.tab)
+	}
 	return func() tea.Msg {
 		result, err := app.Get(m.ctx, app.GetParams{Folder: folderName, FolderID: folderID, Kind: kind}, m.reporter)
 		if err != nil {
@@ -944,9 +966,15 @@ func (m Model) startGetConfirm() (tea.Model, tea.Cmd) {
 	if m.currentFolder == nil {
 		return m, nil
 	}
-	m.confirm = confirmState{kind: confirmGet, tab: m.tab}
+	resourceKind := tabKind(m.tab)
+	status := "Confirm get."
+	if m.focus == focusFolders {
+		resourceKind = "all"
+		status = "Confirm get all."
+	}
+	m.confirm = confirmState{kind: confirmGet, tab: m.tab, resourceKind: resourceKind}
 	m.interaction = interactionConfirm
-	m.status = "Confirm get."
+	m.status = status
 	return m, nil
 }
 
@@ -1351,6 +1379,8 @@ func getResultMessage(kind string, result app.GetResult) string {
 		return fmt.Sprintf("Wrote env artifacts with %d key(s).", result.EnvKeys)
 	case "note":
 		return fmt.Sprintf("Synced %d note(s).", result.NotesSynced)
+	case "all":
+		return fmt.Sprintf("Deployed %d SSH key(s), wrote %d env key(s), synced %d note(s).", result.SSHDeployed, result.EnvKeys, result.NotesSynced)
 	default:
 		return "Get completed."
 	}

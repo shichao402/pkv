@@ -14,15 +14,20 @@ import (
 )
 
 func TestRunUnlocksBeforeStartingProgram(t *testing.T) {
-	oldUnlock, oldProgram := runStartupUnlock, runTeaProgram
+	oldUnlock, oldValidate, oldProgram := runStartupUnlock, validateStartupSession, runTeaProgram
 	defer func() {
 		runStartupUnlock = oldUnlock
+		validateStartupSession = oldValidate
 		runTeaProgram = oldProgram
 	}()
 	var calls []string
 
-	runStartupUnlock = func(context.Context) error {
+	runStartupUnlock = func(context.Context) (string, error) {
 		calls = append(calls, "unlock")
+		return "startup-session", nil
+	}
+	validateStartupSession = func(context.Context, string) error {
+		calls = append(calls, "validate")
 		return nil
 	}
 	runTeaProgram = func(Model) error {
@@ -34,22 +39,23 @@ func TestRunUnlocksBeforeStartingProgram(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
-	if got := strings.Join(calls, ","); got != "unlock,program" {
-		t.Fatalf("call order = %q, want unlock,program", got)
+	if got := strings.Join(calls, ","); got != "unlock,validate,program" {
+		t.Fatalf("call order = %q, want unlock,validate,program", got)
 	}
 }
 
 func TestRunStopsWhenUnlockFails(t *testing.T) {
-	oldUnlock, oldProgram := runStartupUnlock, runTeaProgram
+	oldUnlock, oldValidate, oldProgram := runStartupUnlock, validateStartupSession, runTeaProgram
 	defer func() {
 		runStartupUnlock = oldUnlock
+		validateStartupSession = oldValidate
 		runTeaProgram = oldProgram
 	}()
 	unlockErr := errors.New("unlock failed")
 	startedProgram := false
 
-	runStartupUnlock = func(context.Context) error {
-		return unlockErr
+	runStartupUnlock = func(context.Context) (string, error) {
+		return "", unlockErr
 	}
 	runTeaProgram = func(Model) error {
 		startedProgram = true
@@ -62,6 +68,66 @@ func TestRunStopsWhenUnlockFails(t *testing.T) {
 	}
 	if startedProgram {
 		t.Fatal("program started after unlock failure")
+	}
+}
+
+func TestRunStopsWhenStartupSessionValidationFails(t *testing.T) {
+	oldUnlock, oldValidate, oldProgram := runStartupUnlock, validateStartupSession, runTeaProgram
+	defer func() {
+		runStartupUnlock = oldUnlock
+		validateStartupSession = oldValidate
+		runTeaProgram = oldProgram
+	}()
+	validateErr := errors.New("vault is locked")
+	startedProgram := false
+
+	runStartupUnlock = func(context.Context) (string, error) {
+		return "bad-session", nil
+	}
+	validateStartupSession = func(context.Context, string) error {
+		return validateErr
+	}
+	runTeaProgram = func(Model) error {
+		startedProgram = true
+		return nil
+	}
+
+	err := Run(t.Context())
+	if !errors.Is(err, validateErr) {
+		t.Fatalf("Run() error = %v, want %v", err, validateErr)
+	}
+	if startedProgram {
+		t.Fatal("program started after session validation failure")
+	}
+}
+
+func TestRunPassesStartupSessionToProgramContext(t *testing.T) {
+	oldUnlock, oldValidate, oldProgram := runStartupUnlock, validateStartupSession, runTeaProgram
+	defer func() {
+		runStartupUnlock = oldUnlock
+		validateStartupSession = oldValidate
+		runTeaProgram = oldProgram
+	}()
+
+	runStartupUnlock = func(context.Context) (string, error) {
+		return "startup-session", nil
+	}
+	validateStartupSession = func(context.Context, string) error {
+		return nil
+	}
+	runTeaProgram = func(model Model) error {
+		session, ok := app.BitwardenSessionFromContext(model.ctx)
+		if !ok {
+			t.Fatal("model context is missing startup Bitwarden session")
+		}
+		if session != "startup-session" {
+			t.Fatalf("session = %q, want startup-session", session)
+		}
+		return nil
+	}
+
+	if err := Run(t.Context()); err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
 	}
 }
 
@@ -306,6 +372,26 @@ func TestGetStartsConfirmationAndCancelStopsIt(t *testing.T) {
 	}
 }
 
+func TestFolderGetStartsAllConfirmation(t *testing.T) {
+	model := readyModel()
+	model.focus = focusFolders
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("folder get cmd = non-nil, want confirmation only")
+	}
+	if got.interaction != interactionConfirm || got.confirm.kind != confirmGet {
+		t.Fatalf("interaction = %v/%v, want get confirmation", got.interaction, got.confirm.kind)
+	}
+	if got.confirm.resourceKind != "all" {
+		t.Fatalf("confirm resource kind = %q, want all", got.confirm.resourceKind)
+	}
+	if got.status != "Confirm get all." {
+		t.Fatalf("status = %q, want Confirm get all.", got.status)
+	}
+}
+
 func TestConfirmGetReturnsOperationCommand(t *testing.T) {
 	model := readyModel()
 	model.focus = focusResources
@@ -333,6 +419,16 @@ func TestViewRendersGetHint(t *testing.T) {
 	view := model.View()
 	if !strings.Contains(view, "g get") {
 		t.Fatalf("View() missing get hint in %q", view)
+	}
+}
+
+func TestViewRendersFolderGetAllHint(t *testing.T) {
+	model := readyModel()
+	model.focus = focusFolders
+
+	view := model.View()
+	if !strings.Contains(view, "g get all") {
+		t.Fatalf("View() missing folder get all hint in %q", view)
 	}
 }
 
@@ -576,6 +672,27 @@ func TestOperationResultGetDoesNotReload(t *testing.T) {
 	}
 	if got.status != "Synced 2 note(s)." {
 		t.Fatalf("status = %q, want get success message preserved", got.status)
+	}
+}
+
+func TestOperationResultUpdatesBitwardenSession(t *testing.T) {
+	model := readyModel()
+
+	updated, cmd := model.Update(operationResultMsg{
+		message: "Vault unlocked.",
+		session: "new-session",
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("cmd != nil, want no reload")
+	}
+	session, ok := app.BitwardenSessionFromContext(got.ctx)
+	if !ok {
+		t.Fatal("model context is missing updated Bitwarden session")
+	}
+	if session != "new-session" {
+		t.Fatalf("session = %q, want new-session", session)
 	}
 }
 

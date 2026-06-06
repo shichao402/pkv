@@ -408,7 +408,7 @@ func renderFooterHint(m Model) string {
 func renderNavigationFooterHint(m Model) string {
 	switch m.focus {
 	case focusFolders:
-		return "Folders · ↑↓ navigate · enter open resources · tab/→ resources · a add folder · u unlock · r reload · ? help · q quit"
+		return "Folders · ↑↓ navigate · enter open resources · g get all · tab/→ resources · a add folder · u unlock · r reload · ? help · q quit"
 	case focusDetail:
 		return renderDetailFooterHint(m)
 	default:
@@ -469,7 +469,7 @@ func renderHelpPopup(m Model, contentWidth int) string {
 		"  ? help    q quit    u unlock    r reload",
 		"",
 		"Folders",
-		"  ↑/↓ or j/k move    enter open resources    tab/→ focus resources    a add folder",
+		"  ↑/↓ or j/k move    enter open resources    g get all    tab/→ focus resources    a add folder",
 		"",
 		"Resources",
 		"  ↑/↓ or j/k move    enter detail    tab/←→ switch tab    esc folders",

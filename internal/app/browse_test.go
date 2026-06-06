@@ -171,23 +171,54 @@ func TestBrowseVaultSnapshotGroupsItemsByFolderID(t *testing.T) {
 	}
 }
 
+func TestBrowseVaultSnapshotUsesSessionFromContext(t *testing.T) {
+	client := &fakeBrowseClient{
+		folders: []bwtypes.Folder{{ID: "folder-1", Name: "prod"}},
+	}
+	ctx := WithBitwardenSession(context.Background(), "startup-session")
+
+	_, err := browseVaultSnapshotWithClient(ctx, client, nil)
+	if err != nil {
+		t.Fatalf("browseVaultSnapshotWithClient() error = %v, want nil", err)
+	}
+	if client.ensureUnlockedCalls != 0 {
+		t.Fatalf("EnsureUnlocked calls = %d, want 0", client.ensureUnlockedCalls)
+	}
+	if client.syncSession != "startup-session" {
+		t.Fatalf("Sync session = %q, want startup-session", client.syncSession)
+	}
+	if client.listFoldersSession != "startup-session" {
+		t.Fatalf("ListFolders session = %q, want startup-session", client.listFoldersSession)
+	}
+	if client.listAllItemsSession != "startup-session" {
+		t.Fatalf("ListAllItems session = %q, want startup-session", client.listAllItemsSession)
+	}
+}
+
 type fakeBrowseClient struct {
 	folders  []bwtypes.Folder
 	allItems []bwtypes.Item
 
-	listAllItemsCalls int
-	listItemsCalls    int
+	ensureUnlockedCalls int
+	syncSession         string
+	listFoldersSession  string
+	listAllItemsSession string
+	listAllItemsCalls   int
+	listItemsCalls      int
 }
 
 func (c *fakeBrowseClient) EnsureUnlocked() (string, error) {
+	c.ensureUnlockedCalls++
 	return "session", nil
 }
 
-func (c *fakeBrowseClient) Sync(string) error {
+func (c *fakeBrowseClient) Sync(session string) error {
+	c.syncSession = session
 	return nil
 }
 
-func (c *fakeBrowseClient) ListFolders(string) ([]bwtypes.Folder, error) {
+func (c *fakeBrowseClient) ListFolders(session string) ([]bwtypes.Folder, error) {
+	c.listFoldersSession = session
 	return c.folders, nil
 }
 
@@ -200,7 +231,8 @@ func (c *fakeBrowseClient) ListItems(string, string) ([]bwtypes.Item, error) {
 	return nil, nil
 }
 
-func (c *fakeBrowseClient) ListAllItems(string) ([]bwtypes.Item, error) {
+func (c *fakeBrowseClient) ListAllItems(session string) ([]bwtypes.Item, error) {
+	c.listAllItemsSession = session
 	c.listAllItemsCalls++
 	return c.allItems, nil
 }
