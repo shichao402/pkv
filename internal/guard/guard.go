@@ -27,6 +27,8 @@ type Status struct {
 	NeedsUnlock    string `json:"needs_unlock,omitempty"`
 }
 
+type ConflictNotifier func(notes []state.NoteEntry)
+
 type Guard struct {
 	state    *state.State
 	client   *bw.Client
@@ -40,6 +42,7 @@ type Guard struct {
 	sessionMissing bool
 	watchRunning   bool
 	lastSyncError  string
+	onConflict     ConflictNotifier
 }
 
 type SyncSummary struct {
@@ -102,6 +105,21 @@ func (g *Guard) ApplyResolvedSession(resolved app.ResolvedSession) {
 	g.session = resolved.Session
 	g.sessionSource = resolved.Source
 	g.sessionMissing = false
+}
+
+func (g *Guard) SetConflictNotifier(fn ConflictNotifier) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.onConflict = fn
+}
+
+func (g *Guard) notifyConflicts(notes []state.NoteEntry) {
+	g.mu.Lock()
+	fn := g.onConflict
+	g.mu.Unlock()
+	if fn != nil && len(notes) > 0 {
+		fn(notes)
+	}
 }
 
 func (g *Guard) Status() Status {
@@ -438,6 +456,7 @@ func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary
 
 	pusher := BWNotePusher{Client: g.client, Session: session}
 	tracked := st.FindSyncedNotes(ws.Folder, ws.TargetDir)
+	var newConflicts []state.NoteEntry
 	for _, entry := range tracked {
 		if err := ctx.Err(); err != nil {
 			return summary, err
@@ -472,13 +491,18 @@ func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary
 			g.setLastSyncError(err.Error())
 			return summary, nil
 		}
+		hadConflict := entry.Conflict != ""
 		st.UpsertNote(out.UpdatedEntry)
 		if out.UpdatedEntry.Conflict != "" {
 			summary.Conflicts++
+			if !hadConflict {
+				newConflicts = append(newConflicts, out.UpdatedEntry)
+			}
 		} else {
 			summary.Reconciled++
 		}
 	}
+	g.notifyConflicts(newConflicts)
 	if err := st.Save(); err != nil {
 		g.setLastSyncError(fmt.Sprintf("save state: %v", err))
 		return summary, nil
@@ -500,6 +524,66 @@ func readLocalNote(path string) (content string, modTime time.Time, err error) {
 		return string(data), time.Time{}, nil
 	}
 	return string(data), info.ModTime().UTC(), nil
+}
+
+// PushNote uploads the local tracked note to Bitwarden.
+func (g *Guard) PushNote(ctx context.Context, itemID, folder, targetDir string) error {
+	return g.syncNote(ctx, itemID, folder, targetDir, ActionPushLocal)
+}
+
+// PullNote downloads the remote note into the local tracked file.
+func (g *Guard) PullNote(ctx context.Context, itemID, folder, targetDir string) error {
+	return g.syncNote(ctx, itemID, folder, targetDir, ActionPullRemote)
+}
+
+func (g *Guard) syncNote(ctx context.Context, itemID, folder, targetDir string, action NoteAction) error {
+	if !g.resolveSession(ctx) {
+		return fmt.Errorf("no valid Bitwarden session; %s", app.NeedsUnlockMessage())
+	}
+
+	g.mu.Lock()
+	st := g.state
+	session := g.session
+	g.mu.Unlock()
+
+	entry := st.FindNoteEntry(itemID, folder, targetDir)
+	if entry == nil {
+		return fmt.Errorf("note entry not found")
+	}
+
+	remote, err := g.client.GetItem(session, itemID)
+	if err != nil {
+		return err
+	}
+
+	localContent, localMod, err := readLocalNote(entry.FilePath)
+	if err != nil {
+		return err
+	}
+
+	ws := findWorkspaceForNote(st, folder, targetDir, entry.TargetDir)
+	if ws == nil {
+		return fmt.Errorf("workspace not found for note")
+	}
+
+	var pusher NotePusher
+	if action == ActionPushLocal {
+		pusher = BWNotePusher{Client: g.client, Session: session}
+	}
+
+	out, err := ReconcileNote(ReconcileInput{
+		Entry:         *entry,
+		Remote:        remote,
+		LocalContent:  localContent,
+		LocalModTime:  localMod,
+		WorkspaceRoot: ws.RootPath,
+	}, ReconcileDecision{Action: action}, pusher)
+	if err != nil {
+		return err
+	}
+
+	st.UpsertNote(out.UpdatedEntry)
+	return st.Save()
 }
 
 // ResolveConflict clears a pending conflict by choosing local or remote copy.

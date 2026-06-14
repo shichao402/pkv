@@ -46,10 +46,28 @@ func (s *Server) MCPServer() *server.MCPServer {
 		"pkv",
 		version.Version,
 		server.WithToolCapabilities(true),
+		server.WithResourceCapabilities(true, true),
 		server.WithHooks(hooks),
 	)
 
 	s.registerTools(mcpServer)
+	s.registerResources(mcpServer)
+	s.guard.SetConflictNotifier(func(notes []state.NoteEntry) {
+		for _, note := range notes {
+			mcpServer.SendNotificationToAllClients(string(mcp.MethodNotificationMessage), map[string]any{
+				"level":  mcp.LoggingLevelWarning,
+				"logger": "pkv-guard",
+				"data": map[string]any{
+					"event":      "conflict",
+					"item_id":    note.ItemID,
+					"file_name":  note.FileName,
+					"folder":     note.Folder,
+					"target_dir": note.TargetDir,
+					"file_path":  note.FilePath,
+				},
+			})
+		}
+	})
 	return mcpServer
 }
 
@@ -91,13 +109,103 @@ func (s *Server) registerTools(mcpServer *server.MCPServer) {
 		mcp.WithString("target_dir", mcp.Description("Synced target directory")),
 		mcp.WithString("choice", mcp.Required(), mcp.Description("keep_local, keep_remote, local, or remote")),
 	), s.handleResolveConflict)
+	mcpServer.AddTool(mcp.NewTool("pkv_show_conflict",
+		mcp.WithDescription("Show canonical path and conflict copies for a pending note"),
+		mcp.WithString("item_id", mcp.Required()),
+	), s.handleShowConflict)
+	mcpServer.AddTool(mcp.NewTool("pkv_push_note",
+		mcp.WithDescription("Push a tracked local note to Bitwarden"),
+		mcp.WithString("item_id", mcp.Required()),
+		mcp.WithString("folder", mcp.Required()),
+		mcp.WithString("target_dir", mcp.Description("Synced target directory")),
+	), s.handlePushNote)
+	mcpServer.AddTool(mcp.NewTool("pkv_pull_note",
+		mcp.WithDescription("Pull a remote note into the tracked local file"),
+		mcp.WithString("item_id", mcp.Required()),
+		mcp.WithString("folder", mcp.Required()),
+		mcp.WithString("target_dir", mcp.Description("Synced target directory")),
+	), s.handlePullNote)
 }
 
-func (s *Server) handleStatus(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) registerResources(mcpServer *server.MCPServer) {
+	mcpServer.AddResources(
+		server.ServerResource{
+			Resource: mcp.NewResource("pkv://status", "Guard sync status"),
+			Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+				return s.resourceJSON("pkv://status", s.statusPayload())
+			},
+		},
+		server.ServerResource{
+			Resource: mcp.NewResource("pkv://workspaces", "Registered guard workspaces"),
+			Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+				return s.resourceJSON("pkv://workspaces", s.workspacesPayload())
+			},
+		},
+		server.ServerResource{
+			Resource: mcp.NewResource("pkv://conflicts", "Pending note conflicts"),
+			Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+				payload, err := s.conflictsPayload()
+				if err != nil {
+					return nil, err
+				}
+				return s.resourceJSON("pkv://conflicts", payload)
+			},
+		},
+	)
+	mcpServer.AddResourceTemplate(
+		mcp.NewResourceTemplate("pkv://conflicts/{item_id}", "Conflict detail for one note"),
+		func(_ context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			itemID := conflictItemIDFromRequest(request)
+			if itemID == "" {
+				return nil, fmt.Errorf("item_id is required")
+			}
+			detail, err := guard.ShowConflict(s.state, itemID)
+			if err != nil {
+				return nil, err
+			}
+			return s.resourceJSON(request.Params.URI, detail)
+		},
+	)
+}
+
+func conflictItemIDFromRequest(request mcp.ReadResourceRequest) string {
+	if args := request.Params.Arguments; args != nil {
+		if raw, ok := args["item_id"]; ok {
+			switch v := raw.(type) {
+			case []string:
+				if len(v) > 0 {
+					return strings.TrimSpace(v[0])
+				}
+			case string:
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	uri := strings.TrimSpace(request.Params.URI)
+	const prefix = "pkv://conflicts/"
+	if strings.HasPrefix(uri, prefix) {
+		return strings.TrimSpace(strings.TrimPrefix(uri, prefix))
+	}
+	return ""
+}
+
+func (s *Server) resourceJSON(uri string, payload any) ([]mcp.ResourceContents, error) {
+	text, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return []mcp.ResourceContents{mcp.TextResourceContents{
+		URI:      uri,
+		MIMEType: "application/json",
+		Text:     string(text),
+	}}, nil
+}
+
+func (s *Server) statusPayload() map[string]any {
 	workspaces := guard.ListRegisteredWorkspaces(s.state)
 	conflicts := s.state.ListConflictNotes()
 	guardStatus := s.guard.Status()
-	payload := map[string]any{
+	return map[string]any{
 		"workspaces":       len(workspaces),
 		"conflicts":        len(conflicts),
 		"session_present":  guardStatus.SessionPresent,
@@ -107,8 +215,54 @@ func (s *Server) handleStatus(_ context.Context, _ mcp.CallToolRequest) (*mcp.Ca
 		"last_sync_error":  guardStatus.LastSyncError,
 		"needs_unlock":     guardStatus.NeedsUnlock,
 	}
+}
+
+func (s *Server) workspacesPayload() map[string]any {
+	workspaces := guard.ListRegisteredWorkspaces(s.state)
+	type workspaceView struct {
+		WorkspaceID  string `json:"workspace_id"`
+		RootPath     string `json:"root_path"`
+		Folder       string `json:"folder"`
+		TargetDir    string `json:"target_dir"`
+		RegisteredAt string `json:"registered_at"`
+	}
+	views := make([]workspaceView, 0, len(workspaces))
+	for _, ws := range workspaces {
+		views = append(views, workspaceView{
+			WorkspaceID:  ws.RootPath,
+			RootPath:     ws.RootPath,
+			Folder:       ws.Folder,
+			TargetDir:    ws.TargetDir,
+			RegisteredAt: ws.RegisteredAt,
+		})
+	}
+	return map[string]any{"workspaces": views}
+}
+
+func (s *Server) conflictsPayload() (map[string]any, error) {
+	conflicts := s.state.ListConflictNotes()
+	filesByWorkspace := make(map[string][]string)
+	for _, ws := range s.state.ListWorkspaces() {
+		paths, err := guard.ListConflictFiles(ws.RootPath)
+		if err != nil {
+			return nil, err
+		}
+		if len(paths) > 0 {
+			filesByWorkspace[ws.RootPath] = paths
+		}
+	}
+	return map[string]any{
+		"notes":          conflicts,
+		"conflict_files": filesByWorkspace,
+	}, nil
+}
+
+func (s *Server) handleStatus(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	payload := s.statusPayload()
 	text, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
+		workspaces := guard.ListRegisteredWorkspaces(s.state)
+		conflicts := s.state.ListConflictNotes()
 		return mcp.NewToolResultText(fmt.Sprintf("status: workspaces=%d conflicts=%d", len(workspaces), len(conflicts))), nil
 	}
 	return mcp.NewToolResultText(string(text)), nil
@@ -206,25 +360,7 @@ func (s *Server) handleRegisterWorkspace(ctx context.Context, req mcp.CallToolRe
 }
 
 func (s *Server) handleListWorkspaces(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	workspaces := guard.ListRegisteredWorkspaces(s.state)
-	type workspaceView struct {
-		WorkspaceID string `json:"workspace_id"`
-		RootPath    string `json:"root_path"`
-		Folder      string `json:"folder"`
-		TargetDir   string `json:"target_dir"`
-		RegisteredAt string `json:"registered_at"`
-	}
-	views := make([]workspaceView, 0, len(workspaces))
-	for _, ws := range workspaces {
-		views = append(views, workspaceView{
-			WorkspaceID:  ws.RootPath,
-			RootPath:     ws.RootPath,
-			Folder:       ws.Folder,
-			TargetDir:    ws.TargetDir,
-			RegisteredAt: ws.RegisteredAt,
-		})
-	}
-	text, _ := json.MarshalIndent(map[string]any{"workspaces": views}, "", "  ")
+	text, _ := json.MarshalIndent(s.workspacesPayload(), "", "  ")
 	return mcp.NewToolResultText(string(text)), nil
 }
 
@@ -272,20 +408,9 @@ func (s *Server) handleSyncNow(ctx context.Context, req mcp.CallToolRequest) (*m
 }
 
 func (s *Server) handleListConflicts(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	conflicts := s.state.ListConflictNotes()
-	filesByWorkspace := make(map[string][]string)
-	for _, ws := range s.state.ListWorkspaces() {
-		paths, err := guard.ListConflictFiles(ws.RootPath)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		if len(paths) > 0 {
-			filesByWorkspace[ws.RootPath] = paths
-		}
-	}
-	payload := map[string]any{
-		"notes":          conflicts,
-		"conflict_files": filesByWorkspace,
+	payload, err := s.conflictsPayload()
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	text, _ := json.MarshalIndent(payload, "", "  ")
 	return mcp.NewToolResultText(string(text)), nil
@@ -312,6 +437,51 @@ func (s *Server) handleResolveConflict(ctx context.Context, req mcp.CallToolRequ
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText("conflict resolved"), nil
+}
+
+func (s *Server) handleShowConflict(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	itemID, err := req.RequireString("item_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	detail, err := guard.ShowConflict(s.state, itemID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	text, _ := json.MarshalIndent(detail, "", "  ")
+	return mcp.NewToolResultText(string(text)), nil
+}
+
+func (s *Server) handlePushNote(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	itemID, err := req.RequireString("item_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	folder, err := req.RequireString("folder")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	targetDir := req.GetString("target_dir", "")
+	if err := s.guard.PushNote(ctx, itemID, folder, targetDir); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText("note pushed"), nil
+}
+
+func (s *Server) handlePullNote(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	itemID, err := req.RequireString("item_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	folder, err := req.RequireString("folder")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	targetDir := req.GetString("target_dir", "")
+	if err := s.guard.PullNote(ctx, itemID, folder, targetDir); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText("note pulled"), nil
 }
 
 // ServeStdio starts the MCP server over stdio transport.
