@@ -39,7 +39,9 @@ func NewServer(st *state.State) *Server {
 func (s *Server) MCPServer() *server.MCPServer {
 	hooks := &server.Hooks{}
 	hooks.AddAfterInitialize(func(_ context.Context, _ any, _ *mcp.InitializeRequest, _ *mcp.InitializeResult) {
-		_ = s.guard.RunInitPipeline(context.Background())
+		go func() {
+			_ = s.guard.RunInitPipeline(context.Background())
+		}()
 	})
 
 	mcpServer := server.NewMCPServer(
@@ -497,6 +499,12 @@ func (s *Server) handlePullNote(ctx context.Context, req mcp.CallToolRequest) (*
 
 // ServeStdio starts the MCP server over stdio transport.
 func ServeStdio() error {
+	lock, err := acquireStdioLock()
+	if err != nil {
+		return err
+	}
+	defer releaseStdioLock(lock)
+
 	st, err := state.Load()
 	if err != nil {
 		return err
