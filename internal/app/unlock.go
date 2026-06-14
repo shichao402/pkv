@@ -25,5 +25,8 @@ func Unlock(ctx context.Context, _ UnlockParams, r Reporter) (UnlockResult, erro
 	if err := ctx.Err(); err != nil {
 		return UnlockResult{}, err
 	}
+	if err := WriteSession(session); err != nil {
+		return UnlockResult{}, fmt.Errorf("persist session: %w", err)
+	}
 	return UnlockResult{Session: session}, nil
 }

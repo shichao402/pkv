@@ -2,7 +2,19 @@ package types
 
 import (
 	"testing"
+	"time"
 )
+
+func TestRevisionTime(t *testing.T) {
+	item := Item{RevisionDate: "2024-06-01T12:34:56.000Z"}
+	ts, err := item.RevisionTime()
+	if err != nil {
+		t.Fatalf("RevisionTime() error = %v", err)
+	}
+	if ts.UTC().Format(time.RFC3339) != "2024-06-01T12:34:56Z" {
+		t.Fatalf("RevisionTime() = %v", ts)
+	}
+}
 
 func TestGetCustomField(t *testing.T) {
 	tests := []struct {

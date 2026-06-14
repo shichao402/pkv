@@ -415,6 +415,11 @@ func displayPath(path, targetDir string) string {
 	return path
 }
 
+func (s *Syncer) Preflight(items []types.Item, sourcesByID map[string]string, targetDir, folder string) error {
+	_, err := s.planSync(items, sourcesByID, targetDir, folder)
+	return err
+}
+
 func (s *Syncer) applySyncPlan(plan *syncPlan) error {
 	for i := range plan.deletes {
 		entry := &plan.deletes[i]

@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 const (
 	ItemTypeLogin      = 1
 	ItemTypeSecureNote = 2
@@ -39,13 +41,14 @@ type Folder struct {
 }
 
 type Item struct {
-	ID       string        `json:"id"`
-	FolderID string        `json:"folderId"`
-	Type     int           `json:"type"`
-	Name     string        `json:"name"`
-	Notes    string        `json:"notes"`
-	Fields   []CustomField `json:"fields"`
-	SSHKey   *SSHKeyData   `json:"sshKey,omitempty"`
+	ID             string        `json:"id"`
+	FolderID       string        `json:"folderId"`
+	Type           int           `json:"type"`
+	Name           string        `json:"name"`
+	Notes          string        `json:"notes"`
+	RevisionDate   string        `json:"revisionDate"`
+	Fields         []CustomField `json:"fields"`
+	SSHKey         *SSHKeyData   `json:"sshKey,omitempty"`
 }
 
 type CustomField struct {
@@ -58,6 +61,21 @@ type SSHKeyData struct {
 	PrivateKey     string `json:"privateKey"`
 	PublicKey      string `json:"publicKey"`
 	KeyFingerprint string `json:"keyFingerprint"`
+}
+
+// RevisionTime parses RevisionDate as UTC. Returns zero time when unset.
+func (item *Item) RevisionTime() (time.Time, error) {
+	if item.RevisionDate == "" {
+		return time.Time{}, nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, item.RevisionDate); err == nil {
+		return t.UTC(), nil
+	}
+	t, err := time.Parse(time.RFC3339, item.RevisionDate)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t.UTC(), nil
 }
 
 // GetCustomField returns the value of a custom field by name, or empty string if not found.

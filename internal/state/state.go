@@ -9,6 +9,11 @@ import (
 
 const stateFileName = ".pkv/state.json"
 
+const (
+	ConflictNone    = ""
+	ConflictPending = "pending"
+)
+
 // SourceFolder attribution semantics (shared across all entry types below):
 //
 // Entries are always indexed by the initiating folder (the current project
@@ -35,14 +40,25 @@ type SSHKeyEntry struct {
 }
 
 type NoteEntry struct {
-	ItemID       string `json:"item_id"`
-	Folder       string `json:"folder,omitempty"`
-	SourceFolder string `json:"source_folder,omitempty"` // Folder that provided this note via pkv.include; empty if from Folder itself
+	ItemID           string `json:"item_id"`
+	Folder           string `json:"folder,omitempty"`
+	SourceFolder     string `json:"source_folder,omitempty"` // Folder that provided this note via pkv.include; empty if from Folder itself
+	TargetDir        string `json:"target_dir,omitempty"`
+	FileName         string `json:"file_name"`
+	FilePath         string `json:"file_path"`
+	ContentHash      string `json:"content_hash,omitempty"`
+	SyncedAt         string `json:"synced_at"`
+	RemoteRevisionAt string `json:"remote_revision_at,omitempty"`
+	LocalModifiedAt  string `json:"local_modified_at,omitempty"`
+	LastSyncedAt     string `json:"last_synced_at,omitempty"`
+	Conflict         string `json:"conflict,omitempty"`
+}
+
+type WorkspaceEntry struct {
+	RootPath     string `json:"root_path"`
+	Folder       string `json:"folder"`
 	TargetDir    string `json:"target_dir,omitempty"`
-	FileName     string `json:"file_name"`
-	FilePath     string `json:"file_path"`
-	ContentHash  string `json:"content_hash,omitempty"`
-	SyncedAt     string `json:"synced_at"`
+	RegisteredAt string `json:"registered_at"`
 }
 
 type EnvEntry struct {
@@ -58,10 +74,11 @@ type EnvEntry struct {
 }
 
 type State struct {
-	SSHKeys []SSHKeyEntry `json:"ssh_keys"`
-	Notes   []NoteEntry   `json:"notes"`
-	Envs    []EnvEntry    `json:"envs"`
-	path    string
+	SSHKeys    []SSHKeyEntry    `json:"ssh_keys"`
+	Notes      []NoteEntry      `json:"notes"`
+	Envs       []EnvEntry       `json:"envs"`
+	Workspaces []WorkspaceEntry `json:"workspaces,omitempty"`
+	path       string
 }
 
 func statePath() (string, error) {
@@ -93,12 +110,30 @@ func Load() (*State, error) {
 		return nil, err
 	}
 
+	st.migrate()
+
 	// Validate date fields are in RFC3339 format
 	if err := validateDates(st); err != nil {
 		return nil, err
 	}
 
 	return st, nil
+}
+
+// migrate upgrades legacy state records for guard sync compatibility.
+func (s *State) migrate() {
+	for i := range s.Notes {
+		entry := &s.Notes[i]
+		if entry.LastSyncedAt == "" && entry.SyncedAt != "" {
+			entry.LastSyncedAt = entry.SyncedAt
+		}
+		if entry.RemoteRevisionAt == "" && entry.LastSyncedAt != "" {
+			entry.RemoteRevisionAt = entry.LastSyncedAt
+		}
+		if entry.LocalModifiedAt == "" && entry.LastSyncedAt != "" {
+			entry.LocalModifiedAt = entry.LastSyncedAt
+		}
+	}
 }
 
 // validateDates checks that all date fields are valid RFC3339 timestamps.
@@ -116,10 +151,25 @@ func validateDates(st *State) error {
 	// Check note dates
 	for i := range st.Notes {
 		entry := &st.Notes[i]
-		if entry.SyncedAt != "" {
-			if _, err := time.Parse(time.RFC3339, entry.SyncedAt); err != nil {
-				return err
-			}
+		if err := validateOptionalRFC3339(entry.SyncedAt); err != nil {
+			return err
+		}
+		if err := validateOptionalRFC3339(entry.RemoteRevisionAt); err != nil {
+			return err
+		}
+		if err := validateOptionalRFC3339(entry.LocalModifiedAt); err != nil {
+			return err
+		}
+		if err := validateOptionalRFC3339(entry.LastSyncedAt); err != nil {
+			return err
+		}
+	}
+
+	// Check workspace dates
+	for i := range st.Workspaces {
+		entry := &st.Workspaces[i]
+		if err := validateOptionalRFC3339(entry.RegisteredAt); err != nil {
+			return err
 		}
 	}
 
@@ -134,6 +184,14 @@ func validateDates(st *State) error {
 	}
 
 	return nil
+}
+
+func validateOptionalRFC3339(value string) error {
+	if value == "" {
+		return nil
+	}
+	_, err := time.Parse(time.RFC3339, value)
+	return err
 }
 
 // Save writes the state to disk.
@@ -360,6 +418,82 @@ func noteEntryMatchesTarget(entry NoteEntry, targetDir string) bool {
 		return false
 	}
 	return filepath.Dir(entry.FilePath) == targetDir
+}
+
+// UpsertNote replaces or inserts a note entry with full guard metadata preserved.
+func (s *State) UpsertNote(entry NoteEntry) {
+	if entry.SyncedAt == "" {
+		entry.SyncedAt = time.Now().Format(time.RFC3339)
+	}
+	for i := range s.Notes {
+		e := &s.Notes[i]
+		if e.ItemID == entry.ItemID && e.Folder == entry.Folder && e.TargetDir == entry.TargetDir {
+			s.Notes[i] = entry
+			return
+		}
+	}
+	s.Notes = append(s.Notes, entry)
+}
+
+// ListWorkspaces returns registered workspace entries.
+func (s *State) ListWorkspaces() []WorkspaceEntry {
+	if len(s.Workspaces) == 0 {
+		return nil
+	}
+	out := make([]WorkspaceEntry, len(s.Workspaces))
+	copy(out, s.Workspaces)
+	return out
+}
+
+// FindWorkspace returns a workspace by root path.
+func (s *State) FindWorkspace(rootPath string) *WorkspaceEntry {
+	for i := range s.Workspaces {
+		if s.Workspaces[i].RootPath == rootPath {
+			return &s.Workspaces[i]
+		}
+	}
+	return nil
+}
+
+// RegisterWorkspace adds or updates a workspace registration.
+func (s *State) RegisterWorkspace(entry WorkspaceEntry) {
+	entry.RegisteredAt = time.Now().Format(time.RFC3339)
+	if entry.TargetDir == "" {
+		entry.TargetDir = entry.RootPath
+	}
+	for i := range s.Workspaces {
+		if s.Workspaces[i].RootPath == entry.RootPath {
+			s.Workspaces[i] = entry
+			return
+		}
+	}
+	s.Workspaces = append(s.Workspaces, entry)
+}
+
+// UnregisterWorkspace removes a workspace by root path.
+func (s *State) UnregisterWorkspace(rootPath string) bool {
+	var kept []WorkspaceEntry
+	removed := false
+	for i := range s.Workspaces {
+		if s.Workspaces[i].RootPath == rootPath {
+			removed = true
+			continue
+		}
+		kept = append(kept, s.Workspaces[i])
+	}
+	s.Workspaces = kept
+	return removed
+}
+
+// ListConflictNotes returns note entries with an active conflict marker.
+func (s *State) ListConflictNotes() []NoteEntry {
+	var matched []NoteEntry
+	for i := range s.Notes {
+		if s.Notes[i].Conflict != "" {
+			matched = append(matched, s.Notes[i])
+		}
+	}
+	return matched
 }
 
 // AddStoredSSHKey records a key stored in Bitwarden.
