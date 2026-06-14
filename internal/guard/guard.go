@@ -31,8 +31,9 @@ type InitStep struct {
 }
 
 type InitResult struct {
-	OK    bool       `json:"ok"`
-	Steps []InitStep `json:"steps"`
+	Status string     `json:"status,omitempty"`
+	OK     bool       `json:"ok"`
+	Steps  []InitStep `json:"steps,omitempty"`
 }
 
 type Status struct {
@@ -62,6 +63,7 @@ type Guard struct {
 	watchRunning   bool
 	lastSyncError  string
 	lastInitResult InitResult
+	initRunning    bool
 	onConflict     ConflictNotifier
 }
 
@@ -173,7 +175,7 @@ func (g *Guard) Status() Status {
 			folders = listed
 		}
 	}
-	status.NeedsConfig = DeriveConfigNeeds(os.Getenv("PKV_WORKSPACE_ROOT"), st, folders)
+	status.NeedsConfig = DeriveConfigNeeds(EffectiveWorkspaceRoot(), st, folders)
 	status.Ready = len(status.NeedsConfig) == 0
 	return status
 }
@@ -181,7 +183,19 @@ func (g *Guard) Status() Status {
 func (g *Guard) LastInitResult() InitResult {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.lastInitResult
+	return g.initSnapshotLocked()
+}
+
+func (g *Guard) initSnapshotLocked() InitResult {
+	if g.initRunning {
+		return InitResult{Status: "running", OK: false}
+	}
+	if len(g.lastInitResult.Steps) == 0 {
+		return InitResult{Status: "pending", OK: false}
+	}
+	out := g.lastInitResult
+	out.Status = "done"
+	return out
 }
 
 func (g *Guard) setLastInitResult(result InitResult) {
@@ -192,6 +206,20 @@ func (g *Guard) setLastInitResult(result InitResult) {
 
 // RunInitPipeline starts guard sync, resolves session, auto-registers, syncs, and saves state.
 func (g *Guard) RunInitPipeline(ctx context.Context) InitResult {
+	g.mu.Lock()
+	if g.initRunning {
+		snapshot := g.initSnapshotLocked()
+		g.mu.Unlock()
+		return snapshot
+	}
+	g.initRunning = true
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		g.initRunning = false
+		g.mu.Unlock()
+	}()
+
 	result := InitResult{OK: true}
 	record := func(name string, ok bool, err error) {
 		step := InitStep{Name: name, OK: ok}
@@ -431,13 +459,9 @@ func (g *Guard) pullNewNotes(ctx context.Context, ws state.WorkspaceEntry) (int,
 
 // AutoRegisterFromEnv registers PKV_WORKSPACE_ROOT when not already registered.
 func (g *Guard) AutoRegisterFromEnv(ctx context.Context) (RegisterWorkspaceResult, error) {
-	root := strings.TrimSpace(os.Getenv("PKV_WORKSPACE_ROOT"))
-	if root == "" {
+	absRoot := EffectiveWorkspaceRoot()
+	if absRoot == "" {
 		return RegisterWorkspaceResult{}, nil
-	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return RegisterWorkspaceResult{}, fmt.Errorf("resolve PKV_WORKSPACE_ROOT: %w", err)
 	}
 
 	g.mu.Lock()

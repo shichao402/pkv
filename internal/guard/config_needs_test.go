@@ -14,6 +14,13 @@ func TestDeriveConfigNeedsWorkspaceRootUnset(t *testing.T) {
 	}
 }
 
+func TestDeriveConfigNeedsWorkspaceRootUnexpanded(t *testing.T) {
+	needs := DeriveConfigNeeds("${workspaceFolder}", &state.State{}, nil)
+	if len(needs) != 1 || needs[0].Code != "workspace_root_unset" {
+		t.Fatalf("DeriveConfigNeeds() = %+v, want workspace_root_unset for template literal", needs)
+	}
+}
+
 func TestDeriveConfigNeedsWorkspaceUnregistered(t *testing.T) {
 	root := t.TempDir()
 	needs := DeriveConfigNeeds(root, &state.State{}, nil)

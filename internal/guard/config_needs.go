@@ -2,12 +2,31 @@ package guard
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/shichao402/pkv/internal/bw/types"
 	"github.com/shichao402/pkv/internal/state"
 )
+
+func isUnexpandedTemplate(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.Contains(value, "${") && strings.Contains(value, "}")
+}
+
+// EffectiveWorkspaceRoot returns PKV_WORKSPACE_ROOT when set and expanded by the MCP host.
+func EffectiveWorkspaceRoot() string {
+	root := strings.TrimSpace(os.Getenv("PKV_WORKSPACE_ROOT"))
+	if root == "" || isUnexpandedTemplate(root) {
+		return ""
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return ""
+	}
+	return absRoot
+}
 
 // DeriveConfigNeeds reports workspace configuration gaps for MCP self-service.
 func DeriveConfigNeeds(envRoot string, st *state.State, folders []types.Folder) []ConfigNeed {
@@ -17,6 +36,13 @@ func DeriveConfigNeeds(envRoot string, st *state.State, folders []types.Folder) 
 			Code:    "workspace_root_unset",
 			Message: "PKV_WORKSPACE_ROOT is not set in the MCP server environment",
 			Fix:     "Add PKV_WORKSPACE_ROOT=${workspaceFolder} to the MCP server env (e.g. .cursor/mcp.json)",
+		}}
+	}
+	if isUnexpandedTemplate(root) {
+		return []ConfigNeed{{
+			Code:    "workspace_root_unset",
+			Message: fmt.Sprintf("PKV_WORKSPACE_ROOT was not expanded by the MCP host (got %q)", root),
+			Fix:     "Reload MCP so Cursor expands ${workspaceFolder}, or set PKV_WORKSPACE_ROOT to an absolute path",
 		}}
 	}
 

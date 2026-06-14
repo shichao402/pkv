@@ -45,6 +45,9 @@ func TestRunInitPipelineRecordsSteps(t *testing.T) {
 	}
 
 	stored := g.LastInitResult()
+	if stored.Status != "done" {
+		t.Fatalf("LastInitResult status = %q, want done", stored.Status)
+	}
 	if len(stored.Steps) != 5 {
 		t.Fatalf("LastInitResult steps = %d, want 5", len(stored.Steps))
 	}
