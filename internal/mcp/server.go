@@ -52,9 +52,9 @@ func (s *Server) MCPServer() *server.MCPServer {
 		server.WithInstructions(strings.TrimSpace(`
 PKV guard sync starts automatically on MCP initialize: workspace auto-register, initial sync, and filesystem watch are already running.
 
-Do NOT call pkv_register_workspace or pkv_sync_now unless pkv://status (or pkv_status) shows needs_config entries.
+Do NOT call pkv_register_workspace or pkv_sync_now unless pkv://guard (or pkv_status) shows needs_config entries.
 
-Read pkv://status for ready, needs_config, session, and init results. Unlock requires the user to run "pkv unlock" in a terminal (not via Agent). Resolve note conflicts with pkv_resolve_conflict.
+Read pkv://guard for status, workspaces, conflicts (with summaries), session, and init results. Unlock requires the user to run "pkv unlock" in a terminal (not via Agent). Resolve note conflicts with pkv_resolve_conflict.
 `)),
 		server.WithHooks(hooks),
 	)
@@ -137,21 +137,36 @@ func (s *Server) registerTools(mcpServer *server.MCPServer) {
 }
 
 func (s *Server) registerResources(mcpServer *server.MCPServer) {
+	deprecated := "Deprecated: use pkv://guard instead."
 	mcpServer.AddResources(
 		server.ServerResource{
-			Resource: mcp.NewResource("pkv://status", "Guard sync status"),
+			Resource: mcp.NewResource("pkv://guard", "Guard dashboard",
+				mcp.WithResourceDescription("Combined guard status, workspaces, and conflicts with summaries")),
+			Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+				payload, err := s.guardPayload()
+				if err != nil {
+					return nil, err
+				}
+				return s.resourceJSON("pkv://guard", payload)
+			},
+		},
+		server.ServerResource{
+			Resource: mcp.NewResource("pkv://status", "Guard sync status",
+				mcp.WithResourceDescription(deprecated)),
 			Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 				return s.resourceJSON("pkv://status", s.statusPayload())
 			},
 		},
 		server.ServerResource{
-			Resource: mcp.NewResource("pkv://workspaces", "Registered guard workspaces"),
+			Resource: mcp.NewResource("pkv://workspaces", "Registered guard workspaces",
+				mcp.WithResourceDescription(deprecated)),
 			Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 				return s.resourceJSON("pkv://workspaces", s.workspacesPayload())
 			},
 		},
 		server.ServerResource{
-			Resource: mcp.NewResource("pkv://conflicts", "Pending note conflicts"),
+			Resource: mcp.NewResource("pkv://conflicts", "Pending note conflicts",
+				mcp.WithResourceDescription(deprecated)),
 			Handler: func(_ context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 				payload, err := s.conflictsPayload()
 				if err != nil {
@@ -208,6 +223,73 @@ func (s *Server) resourceJSON(uri string, payload any) ([]mcp.ResourceContents, 
 		MIMEType: "application/json",
 		Text:     string(text),
 	}}, nil
+}
+
+func (s *Server) guardStatusPayload() map[string]any {
+	guardStatus := s.guard.Status()
+	return map[string]any{
+		"ready":           guardStatus.Ready,
+		"needs_config":    guardStatus.NeedsConfig,
+		"needs_unlock":    guardStatus.NeedsUnlock,
+		"init":            s.guard.LastInitResult(),
+		"watch_running":   guardStatus.WatchRunning,
+		"last_sync_error": guardStatus.LastSyncError,
+		"session": map[string]any{
+			"present": guardStatus.SessionPresent,
+			"source":  guardStatus.SessionSource,
+			"missing": guardStatus.SessionMissing,
+		},
+	}
+}
+
+func (s *Server) guardPayload() (map[string]any, error) {
+	workspaces := guard.ListRegisteredWorkspaces(s.state)
+	type workspaceView struct {
+		WorkspaceID  string `json:"workspace_id"`
+		RootPath     string `json:"root_path"`
+		Folder       string `json:"folder"`
+		TargetDir    string `json:"target_dir"`
+		RegisteredAt string `json:"registered_at"`
+	}
+	views := make([]workspaceView, 0, len(workspaces))
+	for _, ws := range workspaces {
+		views = append(views, workspaceView{
+			WorkspaceID:  ws.RootPath,
+			RootPath:     ws.RootPath,
+			Folder:       ws.Folder,
+			TargetDir:    ws.TargetDir,
+			RegisteredAt: ws.RegisteredAt,
+		})
+	}
+
+	conflicts, err := s.conflictsWithDetails()
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"status":      s.guardStatusPayload(),
+		"workspaces":  views,
+		"conflicts":   conflicts,
+	}, nil
+}
+
+func (s *Server) conflictsWithDetails() (map[string]any, error) {
+	base, err := s.conflictsPayload()
+	if err != nil {
+		return nil, err
+	}
+	notes, _ := base["notes"].([]state.NoteEntry)
+	items := make([]map[string]any, 0, len(notes))
+	for _, note := range notes {
+		item := map[string]any{"note": note}
+		if detail, err := guard.ShowConflict(s.state, note.ItemID); err == nil {
+			item["detail"] = detail
+		}
+		items = append(items, item)
+	}
+	base["items"] = items
+	return base, nil
 }
 
 func (s *Server) statusPayload() map[string]any {
