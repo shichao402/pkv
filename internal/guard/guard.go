@@ -18,13 +18,32 @@ import (
 
 const defaultPollInterval = 30 * time.Second
 
+type ConfigNeed struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Fix     string `json:"fix"`
+}
+
+type InitStep struct {
+	Name  string `json:"name"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+type InitResult struct {
+	OK    bool       `json:"ok"`
+	Steps []InitStep `json:"steps"`
+}
+
 type Status struct {
-	SessionPresent bool   `json:"session_present"`
-	SessionSource  string `json:"session_source"`
-	SessionMissing bool   `json:"session_missing"`
-	WatchRunning   bool   `json:"watch_running"`
-	LastSyncError  string `json:"last_sync_error,omitempty"`
-	NeedsUnlock    string `json:"needs_unlock,omitempty"`
+	Ready          bool         `json:"ready"`
+	NeedsConfig    []ConfigNeed `json:"needs_config,omitempty"`
+	SessionPresent bool         `json:"session_present"`
+	SessionSource  string       `json:"session_source"`
+	SessionMissing bool         `json:"session_missing"`
+	WatchRunning   bool         `json:"watch_running"`
+	LastSyncError  string       `json:"last_sync_error,omitempty"`
+	NeedsUnlock    string       `json:"needs_unlock,omitempty"`
 }
 
 type ConflictNotifier func(notes []state.NoteEntry)
@@ -42,6 +61,7 @@ type Guard struct {
 	sessionMissing bool
 	watchRunning   bool
 	lastSyncError  string
+	lastInitResult InitResult
 	onConflict     ConflictNotifier
 }
 
@@ -124,13 +144,21 @@ func (g *Guard) notifyConflicts(notes []state.NoteEntry) {
 
 func (g *Guard) Status() Status {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	session := g.session
+	sessionMissing := g.sessionMissing
+	sessionSource := g.sessionSource
+	watchRunning := g.watchRunning
+	lastSyncError := g.lastSyncError
+	st := g.state
+	client := g.client
+	g.mu.Unlock()
+
 	status := Status{
-		SessionPresent: g.session != "" && !g.sessionMissing,
-		SessionSource:  string(g.sessionSource),
-		SessionMissing: g.sessionMissing,
-		WatchRunning:   g.watchRunning,
-		LastSyncError:  g.lastSyncError,
+		SessionPresent: session != "" && !sessionMissing,
+		SessionSource:  string(sessionSource),
+		SessionMissing: sessionMissing,
+		WatchRunning:   watchRunning,
+		LastSyncError:  lastSyncError,
 	}
 	if status.SessionMissing {
 		status.NeedsUnlock = app.NeedsUnlockMessage()
@@ -138,7 +166,66 @@ func (g *Guard) Status() Status {
 	if status.SessionSource == "" {
 		status.SessionSource = string(app.SessionSourceNone)
 	}
+
+	var folders []types.Folder
+	if status.SessionPresent && client != nil {
+		if listed, err := client.ListFolders(session); err == nil {
+			folders = listed
+		}
+	}
+	status.NeedsConfig = DeriveConfigNeeds(os.Getenv("PKV_WORKSPACE_ROOT"), st, folders)
+	status.Ready = len(status.NeedsConfig) == 0
 	return status
+}
+
+func (g *Guard) LastInitResult() InitResult {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.lastInitResult
+}
+
+func (g *Guard) setLastInitResult(result InitResult) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.lastInitResult = result
+}
+
+// RunInitPipeline starts guard sync, resolves session, auto-registers, syncs, and saves state.
+func (g *Guard) RunInitPipeline(ctx context.Context) InitResult {
+	result := InitResult{OK: true}
+	record := func(name string, ok bool, err error) {
+		step := InitStep{Name: name, OK: ok}
+		if err != nil {
+			step.Error = err.Error()
+			result.OK = false
+		}
+		result.Steps = append(result.Steps, step)
+	}
+
+	if err := g.Start(ctx); err != nil {
+		record("start", false, err)
+		g.setLastInitResult(result)
+		return result
+	}
+	record("start", true, nil)
+
+	sessionOK := g.resolveSession(ctx)
+	record("resolve_session", sessionOK, nil)
+
+	_, regErr := g.AutoRegisterFromEnv(ctx)
+	record("auto_register", regErr == nil, regErr)
+
+	_, syncErr := g.SyncNow(ctx)
+	record("sync", syncErr == nil, syncErr)
+
+	g.mu.Lock()
+	st := g.state
+	g.mu.Unlock()
+	saveErr := st.Save()
+	record("save", saveErr == nil, saveErr)
+
+	g.setLastInitResult(result)
+	return result
 }
 
 func (g *Guard) Start(ctx context.Context) error {
@@ -365,7 +452,16 @@ func (g *Guard) AutoRegisterFromEnv(ctx context.Context) (RegisterWorkspaceResul
 	}
 
 	resolved := ResolveFolderCandidate(absRoot)
-	return g.RegisterWorkspace(ctx, absRoot, resolved.Candidate, "")
+	result, err := g.RegisterWorkspace(ctx, absRoot, resolved.Candidate, "")
+	if err != nil {
+		return result, err
+	}
+	if !result.AlreadyRegistered {
+		if err := st.Save(); err != nil {
+			return result, fmt.Errorf("save state: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func (g *Guard) onLocalChange(rootPath string) {

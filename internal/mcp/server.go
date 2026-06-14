@@ -38,13 +38,8 @@ func NewServer(st *state.State) *Server {
 
 func (s *Server) MCPServer() *server.MCPServer {
 	hooks := &server.Hooks{}
-	hooks.AddAfterInitialize(func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
-		_ = s.guard.Start(context.Background())
-		go func() {
-			bg := context.Background()
-			_, _ = s.guard.AutoRegisterFromEnv(bg)
-			_, _ = s.guard.SyncNow(bg)
-		}()
+	hooks.AddAfterInitialize(func(_ context.Context, _ any, _ *mcp.InitializeRequest, _ *mcp.InitializeResult) {
+		_ = s.guard.RunInitPipeline(context.Background())
 	})
 
 	mcpServer := server.NewMCPServer(
@@ -52,6 +47,13 @@ func (s *Server) MCPServer() *server.MCPServer {
 		version.Version,
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
+		server.WithInstructions(strings.TrimSpace(`
+PKV guard sync starts automatically on MCP initialize: workspace auto-register, initial sync, and filesystem watch are already running.
+
+Do NOT call pkv_register_workspace or pkv_sync_now unless pkv://status (or pkv_status) shows needs_config entries.
+
+Read pkv://status for ready, needs_config, session, and init results. Unlock requires the user to run "pkv unlock" in a terminal (not via Agent). Resolve note conflicts with pkv_resolve_conflict.
+`)),
 		server.WithHooks(hooks),
 	)
 
@@ -210,7 +212,10 @@ func (s *Server) statusPayload() map[string]any {
 	workspaces := guard.ListRegisteredWorkspaces(s.state)
 	conflicts := s.state.ListConflictNotes()
 	guardStatus := s.guard.Status()
+	initResult := s.guard.LastInitResult()
 	return map[string]any{
+		"ready":            guardStatus.Ready,
+		"needs_config":     guardStatus.NeedsConfig,
 		"workspaces":       len(workspaces),
 		"conflicts":        len(conflicts),
 		"session_present":  guardStatus.SessionPresent,
@@ -219,6 +224,7 @@ func (s *Server) statusPayload() map[string]any {
 		"watch_running":    guardStatus.WatchRunning,
 		"last_sync_error":  guardStatus.LastSyncError,
 		"needs_unlock":     guardStatus.NeedsUnlock,
+		"init":             initResult,
 	}
 }
 
