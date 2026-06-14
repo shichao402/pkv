@@ -159,6 +159,31 @@ func TestOnLocalChangeSchedulesNotImmediateSync(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDirtyWhileDebouncePending(t *testing.T) {
+	st := &state.State{}
+	root := t.TempDir()
+	if _, _, err := RegisterWorkspace(st, root, "test-folder", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	g := New(st, nil, "test-session")
+	if g.isWorkspaceDirty(root) {
+		t.Fatal("workspace should not be dirty initially")
+	}
+
+	g.scheduleSync(root)
+	if !g.isWorkspaceDirty(root) {
+		t.Fatal("workspace should be dirty after scheduleSync")
+	}
+
+	g.syncScheduleMu.Lock()
+	g.dirtyRoots = make(map[string]struct{})
+	g.syncScheduleMu.Unlock()
+	if g.isWorkspaceDirty(root) {
+		t.Fatal("workspace should not be dirty after clearing dirtyRoots")
+	}
+}
+
 type recordingPusher struct {
 	fn func(itemID, content string) error
 }

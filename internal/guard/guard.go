@@ -529,6 +529,13 @@ func (g *Guard) scheduleSync(rootPath string) {
 	})
 }
 
+func (g *Guard) isWorkspaceDirty(rootPath string) bool {
+	g.syncScheduleMu.Lock()
+	defer g.syncScheduleMu.Unlock()
+	_, ok := g.dirtyRoots[rootPath]
+	return ok
+}
+
 func (g *Guard) runDebouncedSync(ctx context.Context) {
 	g.syncScheduleMu.Lock()
 	roots := make([]string, 0, len(g.dirtyRoots))
@@ -542,7 +549,7 @@ func (g *Guard) runDebouncedSync(ctx context.Context) {
 	}
 	g.syncMu.Lock()
 	defer g.syncMu.Unlock()
-	_, _ = g.syncWorkspacesLocked(ctx, roots)
+	_, _ = g.syncWorkspacesLocked(ctx, roots, false)
 }
 
 func (g *Guard) pollLoop(ctx context.Context) {
@@ -564,7 +571,7 @@ func (g *Guard) pollLoop(ctx context.Context) {
 				roots = append(roots, ws.RootPath)
 			}
 			g.syncMu.Lock()
-			_, _ = g.syncWorkspacesLocked(ctx, roots)
+			_, _ = g.syncWorkspacesLocked(ctx, roots, true)
 			g.syncMu.Unlock()
 			if wasMissing {
 				g.clearLastSyncError()
@@ -636,7 +643,7 @@ func (g *Guard) SyncNow(ctx context.Context, rootPath ...string) ([]SyncSummary,
 	}
 	g.syncMu.Lock()
 	defer g.syncMu.Unlock()
-	return g.syncWorkspacesLocked(ctx, workspaceRoots(workspaces))
+	return g.syncWorkspacesLocked(ctx, workspaceRoots(workspaces), false)
 }
 
 func workspaceRoots(workspaces []state.WorkspaceEntry) []string {
@@ -651,7 +658,7 @@ func workspaceRoots(workspaces []state.WorkspaceEntry) []string {
 func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary, error) {
 	g.syncMu.Lock()
 	defer g.syncMu.Unlock()
-	summaries, err := g.syncWorkspacesLocked(ctx, []string{rootPath})
+	summaries, err := g.syncWorkspacesLocked(ctx, []string{rootPath}, false)
 	if err != nil {
 		return SyncSummary{Workspace: rootPath}, err
 	}
@@ -661,7 +668,7 @@ func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary
 	return summaries[0], nil
 }
 
-func (g *Guard) syncWorkspacesLocked(ctx context.Context, roots []string) ([]SyncSummary, error) {
+func (g *Guard) syncWorkspacesLocked(ctx context.Context, roots []string, pollCycle bool) ([]SyncSummary, error) {
 	if len(roots) == 0 {
 		return nil, nil
 	}
@@ -694,6 +701,14 @@ func (g *Guard) syncWorkspacesLocked(ctx context.Context, roots []string) ([]Syn
 		if err := ctx.Err(); err != nil {
 			return summaries, err
 		}
+		if pollCycle && g.isWorkspaceDirty(rootPath) {
+			summary, err := g.pullNewNotesForWorkspace(ctx, st, session, rootPath)
+			if err != nil {
+				return summaries, err
+			}
+			summaries = append(summaries, summary)
+			continue
+		}
 		summary, err := g.reconcileWorkspaceLocked(ctx, st, session, rootPath)
 		if err != nil {
 			return summaries, err
@@ -701,6 +716,26 @@ func (g *Guard) syncWorkspacesLocked(ctx context.Context, roots []string) ([]Syn
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
+}
+
+func (g *Guard) pullNewNotesForWorkspace(ctx context.Context, st *state.State, session, rootPath string) (SyncSummary, error) {
+	summary := SyncSummary{Workspace: rootPath}
+	ws := st.FindWorkspace(rootPath)
+	if ws == nil {
+		return summary, fmt.Errorf("workspace not registered: %s", rootPath)
+	}
+	newSynced, err := g.pullNewNotes(ctx, *ws)
+	if err != nil {
+		g.setLastSyncError(fmt.Sprintf("pull new notes: %v", err))
+		return summary, nil
+	}
+	summary.Reconciled += newSynced
+	if err := st.Save(); err != nil {
+		g.setLastSyncError(fmt.Sprintf("save state: %v", err))
+		return summary, nil
+	}
+	g.clearLastSyncError()
+	return summary, nil
 }
 
 func (g *Guard) reconcileWorkspaceLocked(ctx context.Context, st *state.State, session, rootPath string) (SyncSummary, error) {
