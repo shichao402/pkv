@@ -11,10 +11,11 @@ dist/
 .env.*.local
 mise.local.toml
 secrets.*
+.config
 *.pem
 *.key
 *.pass
-
+.pkv/conflicts
 # Dec
 .dec/
 

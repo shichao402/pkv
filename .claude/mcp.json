@@ -1,5 +1,14 @@
 {
   "mcpServers": {
+    "dec-pkv-mcp": {
+      "command": "pkv",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "PKV_WORKSPACE_ROOT": "${workspaceFolder}"
+      }
+    },
     "dec-vikunja-mcp": {
       "command": "mise",
       "args": [
