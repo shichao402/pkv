@@ -603,20 +603,20 @@ TUI 的 unlock **不会把 session 打到屏幕上**，只确认解锁成功。s
 
 ## Guard Sync / MCP Agent 使用
 
-PKV 提供 MCP server（`pkv mcp`），供 Cursor 等 Agent 自动同步 Bitwarden note、处理冲突。在 `.cursor/mcp.json` 或 `.mcp.json` 中配置：
+PKV 提供 MCP server（`pkv mcp`），供 Cursor 等 Agent 自动同步 Bitwarden note。通过 dec 部署时为 **`dec-pkv-mcp`**，并注入 `PKV_WORKSPACE_ROOT=${workspaceFolder}`。
 
-```json
-{
-  "mcpServers": {
-    "pkv": {
-      "command": "pkv",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+### 零 touch 流程（推荐）
 
-### 典型流程
+1. 终端执行一次 **`pkv unlock`**（写入 `~/.pkv/session`）。
+2. 在 Cursor 启用 **`dec-pkv-mcp`** 并 Reload MCP。
+3. MCP 启动后会**自动**：
+   - 注册当前项目 workspace（folder 解析顺序：`.pkv/workspace.yaml` → `.dec/config.yaml` 的 `pkv_folder` → 项目目录名；与 Bitwarden folder **忽略大小写**匹配）
+   - 立即 sync + 持续 watch（远端**新加** note 也会在 poll 中自动 pull）
+4. 无 session 时 Guard **继续运行**，`pkv_status` 会提示需要 unlock；unlock 后自动恢复 sync。
+
+Agent **通常无需**手动 `pkv_register_workspace`，除非 folder 无法自动推断（可在 `.dec/config.yaml` 写 `pkv_folder: PKV` 或 `.pkv/workspace.yaml` 写 `folder: PKV`）。
+
+### 典型流程（手动 / 多项目）
 
 1. **解锁**：Agent 调用 `pkv_unlock`。若用户已在终端执行 `pkv unlock`，Guard 会从 `~/.pkv/session` 或 `BW_SESSION` 恢复 session 并自动触发 sync。也可传入 `session` 参数直接注入并持久化。
 2. **注册 workspace**：`pkv_register_workspace`，传入 `root_path`（项目根）、`folder`（Bitwarden folder）、可选 `target_dir`（note 同步目录，默认等于 `root_path`）。若项目是 git 仓库，响应会建议将 `.pkv/conflicts/` 加入 `.gitignore`。

@@ -210,6 +210,12 @@ func (g *Guard) RegisterWorkspace(ctx context.Context, rootPath, folder, targetD
 		if !folderExists(folders, folder) {
 			return result, fmt.Errorf("Bitwarden folder not found: %s", folder)
 		}
+		canonical, _ := MatchFolderName(folders, folder)
+		if canonical != "" && entry.Folder != canonical {
+			entry.Folder = canonical
+			st.RegisterWorkspace(entry)
+			result.Entry = entry
+		}
 		result.FolderValidated = true
 
 		if !alreadyRegistered {
@@ -250,30 +256,10 @@ func (g *Guard) bootstrapWorkspace(ctx context.Context, ws state.WorkspaceEntry)
 		return 0, fmt.Errorf("sync vault: %w", err)
 	}
 
-	chain, err := g.client.LoadIncludeChain(session, ws.Folder)
+	notes, sourceByID, err := g.loadMergedNotes(session, ws.Folder)
 	if err != nil {
-		g.setLastSyncError(fmt.Sprintf("include chain: %v", err))
+		g.setLastSyncError(err.Error())
 		return 0, err
-	}
-	chainNames := make([]string, len(chain))
-	for i, f := range chain {
-		chainNames[i] = f.Name
-	}
-	itemsByFolder := make(map[string][]types.Item, len(chain))
-	for _, f := range chain {
-		items, err := g.client.ListItems(session, f.ID)
-		if err != nil {
-			g.setLastSyncError(fmt.Sprintf("list items: %v", err))
-			return 0, fmt.Errorf("list items for folder %q: %w", f.Name, err)
-		}
-		itemsByFolder[f.Name] = bw.FilterConfigNotes(items)
-	}
-	merged := note.MergeNoteItems(chainNames, itemsByFolder)
-	notes := make([]types.Item, 0, len(merged.Items))
-	sourceByID := make(map[string]string, len(merged.Items))
-	for _, it := range merged.Items {
-		notes = append(notes, it.Item)
-		sourceByID[it.Item.ID] = it.Source
 	}
 
 	syncer := note.NewSyncer(st)
@@ -288,6 +274,98 @@ func (g *Guard) bootstrapWorkspace(ctx context.Context, ws state.WorkspaceEntry)
 	}
 	g.clearLastSyncError()
 	return synced, nil
+}
+
+func (g *Guard) loadMergedNotes(session, folder string) ([]types.Item, map[string]string, error) {
+	chain, err := g.client.LoadIncludeChain(session, folder)
+	if err != nil {
+		return nil, nil, fmt.Errorf("include chain: %w", err)
+	}
+	chainNames := make([]string, len(chain))
+	for i, f := range chain {
+		chainNames[i] = f.Name
+	}
+	itemsByFolder := make(map[string][]types.Item, len(chain))
+	for _, f := range chain {
+		items, err := g.client.ListItems(session, f.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list items for folder %q: %w", f.Name, err)
+		}
+		itemsByFolder[f.Name] = bw.FilterConfigNotes(items)
+	}
+	merged := note.MergeNoteItems(chainNames, itemsByFolder)
+	notes := make([]types.Item, 0, len(merged.Items))
+	sourceByID := make(map[string]string, len(merged.Items))
+	for _, it := range merged.Items {
+		notes = append(notes, it.Item)
+		sourceByID[it.Item.ID] = it.Source
+	}
+	return notes, sourceByID, nil
+}
+
+func (g *Guard) pullNewNotes(ctx context.Context, ws state.WorkspaceEntry) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	g.mu.Lock()
+	st := g.state
+	session := g.session
+	g.mu.Unlock()
+
+	notes, sourceByID, err := g.loadMergedNotes(session, ws.Folder)
+	if err != nil {
+		return 0, err
+	}
+
+	tracked := make(map[string]struct{})
+	for _, entry := range st.FindSyncedNotes(ws.Folder, ws.TargetDir) {
+		tracked[entry.ItemID] = struct{}{}
+	}
+
+	var newNotes []types.Item
+	newSources := make(map[string]string)
+	for _, item := range notes {
+		if _, ok := tracked[item.ID]; ok {
+			continue
+		}
+		newNotes = append(newNotes, item)
+		if src, ok := sourceByID[item.ID]; ok {
+			newSources[item.ID] = src
+		}
+	}
+	if len(newNotes) == 0 {
+	 return 0, nil
+	}
+
+	syncer := note.NewSyncer(st)
+	return syncer.SyncFolderWithSources(newNotes, newSources, ws.TargetDir, ws.Folder)
+}
+
+// AutoRegisterFromEnv registers PKV_WORKSPACE_ROOT when not already registered.
+func (g *Guard) AutoRegisterFromEnv(ctx context.Context) (RegisterWorkspaceResult, error) {
+	root := strings.TrimSpace(os.Getenv("PKV_WORKSPACE_ROOT"))
+	if root == "" {
+		return RegisterWorkspaceResult{}, nil
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return RegisterWorkspaceResult{}, fmt.Errorf("resolve PKV_WORKSPACE_ROOT: %w", err)
+	}
+
+	g.mu.Lock()
+	st := g.state
+	g.mu.Unlock()
+
+	if existing := st.FindWorkspace(absRoot); existing != nil {
+		return RegisterWorkspaceResult{
+			Entry:             *existing,
+			AlreadyRegistered: true,
+		}, nil
+	}
+
+	resolved := ResolveFolderCandidate(absRoot)
+	return g.RegisterWorkspace(ctx, absRoot, resolved.Candidate, "")
 }
 
 func (g *Guard) onLocalChange(rootPath string) {
@@ -503,6 +581,12 @@ func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary
 		}
 	}
 	g.notifyConflicts(newConflicts)
+	newSynced, err := g.pullNewNotes(ctx, *ws)
+	if err != nil {
+		g.setLastSyncError(fmt.Sprintf("pull new notes: %v", err))
+		return summary, nil
+	}
+	summary.Reconciled += newSynced
 	if err := st.Save(); err != nil {
 		g.setLastSyncError(fmt.Sprintf("save state: %v", err))
 		return summary, nil

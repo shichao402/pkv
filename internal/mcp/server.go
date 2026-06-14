@@ -40,6 +40,11 @@ func (s *Server) MCPServer() *server.MCPServer {
 	hooks := &server.Hooks{}
 	hooks.AddAfterInitialize(func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
 		_ = s.guard.Start(context.Background())
+		go func() {
+			bg := context.Background()
+			_, _ = s.guard.AutoRegisterFromEnv(bg)
+			_, _ = s.guard.SyncNow(bg)
+		}()
 	})
 
 	mcpServer := server.NewMCPServer(

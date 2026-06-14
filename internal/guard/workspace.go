@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/shichao402/pkv/internal/bw/types"
 	"github.com/shichao402/pkv/internal/state"
@@ -48,7 +49,7 @@ func RegisterWorkspace(st *state.State, rootPath, folder, targetDir string) (sta
 		if existing.RootPath != absRoot {
 			continue
 		}
-		if existing.Folder == folder {
+		if strings.EqualFold(existing.Folder, folder) {
 			if targetDir != "" && existing.TargetDir != absTarget {
 				existing.TargetDir = absTarget
 				st.RegisterWorkspace(existing)
@@ -68,12 +69,8 @@ func RegisterWorkspace(st *state.State, rootPath, folder, targetDir string) (sta
 }
 
 func folderExists(folders []types.Folder, name string) bool {
-	for _, f := range folders {
-		if f.Name == name {
-			return true
-		}
-	}
-	return false
+	_, ok := MatchFolderName(folders, name)
+	return ok
 }
 
 // FindWorkspaceByID returns a workspace by root path (workspace_id).

@@ -10,6 +10,10 @@ import (
 )
 
 func TestGuardStartWithoutSessionDoesNotPanic(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("BW_SESSION", "")
+
 	st := &state.State{}
 	g := New(st, nil, "")
 
@@ -31,6 +35,10 @@ func TestGuardStartWithoutSessionDoesNotPanic(t *testing.T) {
 }
 
 func TestGuardSyncWithoutSessionSkipsGracefully(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("BW_SESSION", "")
+
 	st := &state.State{}
 	g := New(st, nil, "")
 	root := t.TempDir()

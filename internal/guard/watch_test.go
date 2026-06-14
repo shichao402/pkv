@@ -73,6 +73,10 @@ func TestWatcherAddWorkspaceRecursive(t *testing.T) {
 }
 
 func TestGuardAddWorkspaceWhileRunning(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("BW_SESSION", "")
+
 	st := &state.State{}
 	g := New(st, nil, "")
 
