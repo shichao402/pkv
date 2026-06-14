@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/shichao402/pkv/internal/bw"
@@ -71,6 +72,8 @@ func hashContent(content string) string {
 
 // DecideAction compares local and remote content hashes against last-synced state.
 // Conflict only when both sides differ from state and from each other.
+// Local edits (file hash != state.ContentHash) never trigger pull; stale remote
+// snapshots older than RemoteRevisionAt re-push local instead of overwriting.
 func DecideAction(entry state.NoteEntry, remote types.Item, localContent string, localMod time.Time) (ReconcileDecision, error) {
 	stateHash := entry.ContentHash
 	remoteHash := hashContent(remote.Notes)
@@ -83,14 +86,55 @@ func DecideAction(entry state.NoteEntry, remote types.Item, localContent string,
 	case !remoteDirty && !localDirty:
 		return ReconcileDecision{Action: ActionNoop}, nil
 	case remoteDirty && !localDirty:
+		if allow, err := allowPullRemote(entry, remote); err != nil {
+			return ReconcileDecision{}, err
+		} else if !allow {
+			return ReconcileDecision{Action: ActionPushLocal}, nil
+		}
 		return ReconcileDecision{Action: ActionPullRemote}, nil
 	case !remoteDirty && localDirty:
 		return ReconcileDecision{Action: ActionPushLocal}, nil
 	case remoteHash == localHash:
 		return ReconcileDecision{Action: ActionNoop}, nil
 	default:
+		if shouldPushLocalForRapidEdit(entry, remote, localContent) {
+			return ReconcileDecision{Action: ActionPushLocal}, nil
+		}
 		return ReconcileDecision{Action: ActionConflictSameSecond}, nil
 	}
+}
+
+// shouldPushLocalForRapidEdit detects incremental local typing where Bitwarden still
+// exposes an older prefix (often from a just-finished push) while the local file has
+// moved ahead. This avoids archiving false conflict copies during rapid edits.
+func shouldPushLocalForRapidEdit(entry state.NoteEntry, remote types.Item, localContent string) bool {
+	if hashContent(localContent) == entry.ContentHash {
+		return false
+	}
+	if hashContent(remote.Notes) == entry.ContentHash {
+		return false
+	}
+	if localContent == "" || remote.Notes == "" {
+		return false
+	}
+	return strings.HasPrefix(localContent, remote.Notes)
+}
+
+// allowPullRemote gates pull so a stale vault snapshot cannot overwrite local content
+// that already matches our last-synced state (e.g. after a push, before BW catches up).
+func allowPullRemote(entry state.NoteEntry, remote types.Item) (bool, error) {
+	storedRev, err := ParseStateTime(entry.RemoteRevisionAt)
+	if err != nil {
+		return false, fmt.Errorf("parse remote_revision_at: %w", err)
+	}
+	remoteRev, err := remote.RevisionTime()
+	if err != nil {
+		return false, fmt.Errorf("parse remote revisionDate: %w", err)
+	}
+	if !storedRev.IsZero() && !remoteRev.IsZero() && remoteRev.Before(storedRev) {
+		return false, nil
+	}
+	return true, nil
 }
 
 // ReconcileNote applies a reconcile decision for one tracked note.
