@@ -709,7 +709,7 @@ func (g *Guard) syncWorkspacesLocked(ctx context.Context, roots []string, pollCy
 			summaries = append(summaries, summary)
 			continue
 		}
-		summary, err := g.reconcileWorkspaceLocked(ctx, st, session, rootPath)
+		summary, err := g.reconcileWorkspaceLocked(ctx, st, session, rootPath, pollCycle)
 		if err != nil {
 			return summaries, err
 		}
@@ -738,7 +738,7 @@ func (g *Guard) pullNewNotesForWorkspace(ctx context.Context, st *state.State, s
 	return summary, nil
 }
 
-func (g *Guard) reconcileWorkspaceLocked(ctx context.Context, st *state.State, session, rootPath string) (SyncSummary, error) {
+func (g *Guard) reconcileWorkspaceLocked(ctx context.Context, st *state.State, session, rootPath string, pollCycle bool) (SyncSummary, error) {
 	summary := SyncSummary{Workspace: rootPath}
 
 	ws := st.FindWorkspace(rootPath)
@@ -798,6 +798,7 @@ func (g *Guard) reconcileWorkspaceLocked(ctx context.Context, st *state.State, s
 			g.setLastSyncError(err.Error())
 			return summary, nil
 		}
+		decision = guardPollPendingEdit(pollCycle, entry, localContent, decision)
 		if decision.Action == ActionNoop {
 			summary.Skipped++
 			continue

@@ -70,10 +70,15 @@ func hashContent(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func hasPendingLocalEdit(entry state.NoteEntry, localContent string) bool {
+	return hashContent(localContent) != entry.ContentHash
+}
+
 // DecideAction compares local and remote content hashes against last-synced state.
 // Conflict only when both sides differ from state and from each other.
-// Local edits (file hash != state.ContentHash) never trigger pull; stale remote
-// snapshots older than RemoteRevisionAt re-push local instead of overwriting.
+// Pending local edits (file hash != state.ContentHash) never trigger pull; only
+// push or noop. Stale remote snapshots older than RemoteRevisionAt re-push local
+// instead of overwriting.
 func DecideAction(entry state.NoteEntry, remote types.Item, localContent string, localMod time.Time) (ReconcileDecision, error) {
 	stateHash := entry.ContentHash
 	remoteHash := hashContent(remote.Notes)
@@ -81,6 +86,20 @@ func DecideAction(entry state.NoteEntry, remote types.Item, localContent string,
 
 	remoteDirty := remoteHash != stateHash
 	localDirty := localHash != stateHash
+
+	if localDirty {
+		switch {
+		case !remoteDirty:
+			return ReconcileDecision{Action: ActionPushLocal}, nil
+		case remoteHash == localHash:
+			return ReconcileDecision{Action: ActionNoop}, nil
+		default:
+			if shouldPushLocalForRapidEdit(entry, remote, localContent) {
+				return ReconcileDecision{Action: ActionPushLocal}, nil
+			}
+			return ReconcileDecision{Action: ActionConflictSameSecond}, nil
+		}
+	}
 
 	switch {
 	case !remoteDirty && !localDirty:
@@ -92,15 +111,24 @@ func DecideAction(entry state.NoteEntry, remote types.Item, localContent string,
 			return ReconcileDecision{Action: ActionPushLocal}, nil
 		}
 		return ReconcileDecision{Action: ActionPullRemote}, nil
-	case !remoteDirty && localDirty:
-		return ReconcileDecision{Action: ActionPushLocal}, nil
 	case remoteHash == localHash:
 		return ReconcileDecision{Action: ActionNoop}, nil
 	default:
-		if shouldPushLocalForRapidEdit(entry, remote, localContent) {
-			return ReconcileDecision{Action: ActionPushLocal}, nil
-		}
 		return ReconcileDecision{Action: ActionConflictSameSecond}, nil
+	}
+}
+
+// guardPollPendingEdit skips reconcile actions during poll when the local file has
+// unsaved edits relative to state. Debounced sync will push the final content.
+func guardPollPendingEdit(pollCycle bool, entry state.NoteEntry, localContent string, decision ReconcileDecision) ReconcileDecision {
+	if !pollCycle || !hasPendingLocalEdit(entry, localContent) {
+		return decision
+	}
+	switch decision.Action {
+	case ActionPullRemote, ActionPushLocal, ActionConflictRemoteWins:
+		return ReconcileDecision{Action: ActionNoop}
+	default:
+		return decision
 	}
 }
 
