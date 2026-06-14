@@ -101,6 +101,51 @@ func TestDecideActionBothSidesLocalWins(t *testing.T) {
 	}
 }
 
+func TestDecideActionOwnPushRevisionNotRemoteDirty(t *testing.T) {
+	lastSync := time.Date(2024, 1, 1, 12, 5, 0, 0, time.UTC)
+	entry := state.NoteEntry{
+		ContentHash:      hashContent("pushed"),
+		LastSyncedAt:     lastSync.Format(time.RFC3339),
+		RemoteRevisionAt: lastSync.Add(-time.Minute).Format(time.RFC3339),
+		LocalModifiedAt:  lastSync.Add(-2 * time.Minute).Format(time.RFC3339),
+	}
+	remote := types.Item{
+		Notes:        "pushed",
+		RevisionDate: lastSync.Add(10 * time.Second).Format(time.RFC3339),
+	}
+
+	decision, err := DecideAction(entry, remote, "pushed", lastSync.Add(-2*time.Minute))
+	if err != nil {
+		t.Fatalf("DecideAction() error = %v", err)
+	}
+	if decision.Action != ActionNoop {
+		t.Fatalf("action = %v, want ActionNoop when remote revision advanced after our push", decision.Action)
+	}
+}
+
+func TestDecideActionRapidLocalEditAfterOwnPush(t *testing.T) {
+	lastSync := time.Date(2024, 1, 1, 12, 5, 0, 0, time.UTC)
+	entry := state.NoteEntry{
+		ContentHash:      hashContent("pushed"),
+		LastSyncedAt:     lastSync.Format(time.RFC3339),
+		RemoteRevisionAt: lastSync.Add(-time.Minute).Format(time.RFC3339),
+		LocalModifiedAt:  lastSync.Add(-2 * time.Minute).Format(time.RFC3339),
+	}
+	remote := types.Item{
+		Notes:        "pushed",
+		RevisionDate: lastSync.Add(10 * time.Second).Format(time.RFC3339),
+	}
+	localMod := lastSync.Add(2 * time.Second)
+
+	decision, err := DecideAction(entry, remote, "1234", localMod)
+	if err != nil {
+		t.Fatalf("DecideAction() error = %v", err)
+	}
+	if decision.Action != ActionPushLocal {
+		t.Fatalf("action = %v, want ActionPushLocal for rapid local-only edit", decision.Action)
+	}
+}
+
 func TestDecideActionSameSecond(t *testing.T) {
 	last := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	ts := last.Add(2 * time.Minute)

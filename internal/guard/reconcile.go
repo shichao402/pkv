@@ -94,11 +94,6 @@ func DecideAction(entry state.NoteEntry, remote types.Item, localContent string,
 	if err != nil {
 		return ReconcileDecision{}, fmt.Errorf("parse remote revisionDate: %w", err)
 	}
-	storedRemote, err := ParseStateTime(entry.RemoteRevisionAt)
-	if err != nil {
-		return ReconcileDecision{}, fmt.Errorf("parse remote_revision_at: %w", err)
-	}
-
 	localTS := localMod.UTC()
 	if localTS.IsZero() {
 		localTS, err = ParseStateTime(entry.LocalModifiedAt)
@@ -107,7 +102,11 @@ func DecideAction(entry state.NoteEntry, remote types.Item, localContent string,
 		}
 	}
 
-	remoteDirty := remoteRev.After(lastSync) || (storedRemote.IsZero() && !remoteRev.IsZero()) || hashContent(remote.Notes) != entry.ContentHash
+	// Remote is dirty only when vault content differs from what we last synced.
+	// Do not use remoteRev.After(lastSync): our own push advances revisionDate while
+	// content already matches entry.ContentHash, which would falsely pair with a new
+	// local edit and trigger conflict handling instead of ActionPushLocal.
+	remoteDirty := hashContent(remote.Notes) != entry.ContentHash
 	localDirty := localTS.After(lastSync) || hashContent(localContent) != entry.ContentHash
 
 	switch {

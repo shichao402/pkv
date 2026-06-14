@@ -56,6 +56,7 @@ type Guard struct {
 	pollEvery time.Duration
 
 	mu             sync.Mutex
+	syncMu         sync.Mutex
 	watcher        *Watcher
 	stop           context.CancelFunc
 	sessionSource  app.SessionSource
@@ -592,6 +593,9 @@ func (g *Guard) SyncNow(ctx context.Context, rootPath ...string) ([]SyncSummary,
 
 // SyncWorkspace reconciles notes for one registered workspace.
 func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary, error) {
+	g.syncMu.Lock()
+	defer g.syncMu.Unlock()
+
 	summary := SyncSummary{Workspace: rootPath}
 
 	g.mu.Lock()
