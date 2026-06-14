@@ -601,6 +601,33 @@ TUI 的 unlock **不会把 session 打到屏幕上**，只确认解锁成功。s
 
 如果你的使用场景看起来缺了 `--master-pass` 才能做到，多半说明正确做法是先 `pkv unlock`（或 `bw unlock --raw`）拿 session，再让 PKV 使用它。
 
+## Guard Sync / MCP Agent 使用
+
+PKV 提供 MCP server（`pkv mcp`），供 Cursor 等 Agent 自动同步 Bitwarden note、处理冲突。在 `.cursor/mcp.json` 或 `.mcp.json` 中配置：
+
+```json
+{
+  "mcpServers": {
+    "pkv": {
+      "command": "pkv",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### 典型流程
+
+1. **解锁**：Agent 调用 `pkv_unlock`。若用户已在终端执行 `pkv unlock`，Guard 会从 `~/.pkv/session` 或 `BW_SESSION` 恢复 session 并自动触发 sync。也可传入 `session` 参数直接注入并持久化。
+2. **注册 workspace**：`pkv_register_workspace`，传入 `root_path`（项目根）、`folder`（Bitwarden folder）、可选 `target_dir`（note 同步目录，默认等于 `root_path`）。若项目是 git 仓库，响应会建议将 `.pkv/conflicts/` 加入 `.gitignore`。
+3. **查看状态**：`pkv_status` 返回 workspace 数量、冲突数、session 状态、watch 是否在跑。
+4. **手动同步**：`pkv_sync_now` 同步全部 workspace；也可传 `workspace_id`（即 `root_path`）或 `folder`+`target_dir` 只同步一个。
+5. **冲突处理**：
+   - `pkv_list_conflicts` 列出 state 中的冲突 note 及 `.pkv/conflicts/` 下的副本文件
+   - `pkv_resolve_conflict` 用 `keep_local` 或 `keep_remote`（兼容 `local`/`remote`）选定版本；resolve 后会删除该 item 在 `.pkv/conflicts/` 的副本
+
+其他工具：`pkv_list_workspaces` 列出已注册 workspace；`pkv_unregister_workspace` 取消注册。
+
 ## 本地产物与状态文件
 
 PKV 会写这些位置：

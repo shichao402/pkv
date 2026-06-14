@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "pkv": {
+      "command": "pkv",
+      "args": ["mcp"]
+    },
     "dec-vikunja-mcp": {
       "command": "mise",
       "args": [
