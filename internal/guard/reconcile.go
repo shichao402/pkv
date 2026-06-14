@@ -69,45 +69,15 @@ func hashContent(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func sameSecond(a, b time.Time) bool {
-	if a.IsZero() || b.IsZero() {
-		return false
-	}
-	au, bu := a.UTC(), b.UTC()
-	return au.Truncate(time.Second).Equal(bu.Truncate(time.Second))
-}
-
-// DecideAction compares remote revision and local modification against last sync.
+// DecideAction compares local and remote content hashes against last-synced state.
+// Conflict only when both sides differ from state and from each other.
 func DecideAction(entry state.NoteEntry, remote types.Item, localContent string, localMod time.Time) (ReconcileDecision, error) {
-	lastSync, err := ParseStateTime(entry.LastSyncedAt)
-	if err != nil {
-		return ReconcileDecision{}, fmt.Errorf("parse last_synced_at: %w", err)
-	}
-	if lastSync.IsZero() {
-		lastSync, err = ParseStateTime(entry.SyncedAt)
-		if err != nil {
-			return ReconcileDecision{}, fmt.Errorf("parse synced_at: %w", err)
-		}
-	}
+	stateHash := entry.ContentHash
+	remoteHash := hashContent(remote.Notes)
+	localHash := hashContent(localContent)
 
-	remoteRev, err := remote.RevisionTime()
-	if err != nil {
-		return ReconcileDecision{}, fmt.Errorf("parse remote revisionDate: %w", err)
-	}
-	localTS := localMod.UTC()
-	if localTS.IsZero() {
-		localTS, err = ParseStateTime(entry.LocalModifiedAt)
-		if err != nil {
-			return ReconcileDecision{}, fmt.Errorf("parse local_modified_at: %w", err)
-		}
-	}
-
-	// Remote is dirty only when vault content differs from what we last synced.
-	// Do not use remoteRev.After(lastSync): our own push advances revisionDate while
-	// content already matches entry.ContentHash, which would falsely pair with a new
-	// local edit and trigger conflict handling instead of ActionPushLocal.
-	remoteDirty := hashContent(remote.Notes) != entry.ContentHash
-	localDirty := localTS.After(lastSync) || hashContent(localContent) != entry.ContentHash
+	remoteDirty := remoteHash != stateHash
+	localDirty := localHash != stateHash
 
 	switch {
 	case !remoteDirty && !localDirty:
@@ -116,15 +86,11 @@ func DecideAction(entry state.NoteEntry, remote types.Item, localContent string,
 		return ReconcileDecision{Action: ActionPullRemote}, nil
 	case !remoteDirty && localDirty:
 		return ReconcileDecision{Action: ActionPushLocal}, nil
-	}
-
-	if sameSecond(remoteRev, localTS) {
+	case remoteHash == localHash:
+		return ReconcileDecision{Action: ActionNoop}, nil
+	default:
 		return ReconcileDecision{Action: ActionConflictSameSecond}, nil
 	}
-	if remoteRev.Before(localTS) {
-		return ReconcileDecision{Action: ActionConflictLocalWins}, nil
-	}
-	return ReconcileDecision{Action: ActionConflictRemoteWins}, nil
 }
 
 // ReconcileNote applies a reconcile decision for one tracked note.

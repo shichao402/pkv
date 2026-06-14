@@ -16,7 +16,8 @@ import (
 	"github.com/shichao402/pkv/internal/state"
 )
 
-const defaultPollInterval = 30 * time.Second
+const defaultPollInterval = 60 * time.Second
+const defaultSyncDebounce = 3 * time.Second
 
 type ConfigNeed struct {
 	Code    string `json:"code"`
@@ -54,9 +55,14 @@ type Guard struct {
 	client   *bw.Client
 	session  string
 	pollEvery time.Duration
+	syncDebounce time.Duration
 
 	mu             sync.Mutex
 	syncMu         sync.Mutex
+	syncScheduleMu sync.Mutex
+	dirtyRoots     map[string]struct{}
+	syncTimer      *time.Timer
+	syncCycleHook  func()
 	watcher        *Watcher
 	stop           context.CancelFunc
 	sessionSource  app.SessionSource
@@ -92,9 +98,20 @@ func New(st *state.State, client *bw.Client, session string) *Guard {
 		client:         client,
 		session:        session,
 		pollEvery:      defaultPollInterval,
+		syncDebounce:   syncDebounceFromEnv(),
+		dirtyRoots:     make(map[string]struct{}),
 		sessionMissing: strings.TrimSpace(session) == "",
 		sessionSource:  app.SessionSourceNone,
 	}
+}
+
+func syncDebounceFromEnv() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("PKV_SYNC_DEBOUNCE")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultSyncDebounce
 }
 
 func (g *Guard) SetSession(session string) {
@@ -294,6 +311,13 @@ func (g *Guard) Stop() {
 		g.watcher.Stop()
 		g.watcher = nil
 	}
+	g.syncScheduleMu.Lock()
+	if g.syncTimer != nil {
+		g.syncTimer.Stop()
+		g.syncTimer = nil
+	}
+	g.dirtyRoots = make(map[string]struct{})
+	g.syncScheduleMu.Unlock()
 	g.watchRunning = false
 }
 
@@ -490,7 +514,35 @@ func (g *Guard) AutoRegisterFromEnv(ctx context.Context) (RegisterWorkspaceResul
 }
 
 func (g *Guard) onLocalChange(rootPath string) {
-	_, _ = g.SyncWorkspace(context.Background(), rootPath)
+	g.scheduleSync(rootPath)
+}
+
+func (g *Guard) scheduleSync(rootPath string) {
+	g.syncScheduleMu.Lock()
+	defer g.syncScheduleMu.Unlock()
+	g.dirtyRoots[rootPath] = struct{}{}
+	if g.syncTimer != nil {
+		g.syncTimer.Stop()
+	}
+	g.syncTimer = time.AfterFunc(g.syncDebounce, func() {
+		g.runDebouncedSync(context.Background())
+	})
+}
+
+func (g *Guard) runDebouncedSync(ctx context.Context) {
+	g.syncScheduleMu.Lock()
+	roots := make([]string, 0, len(g.dirtyRoots))
+	for root := range g.dirtyRoots {
+		roots = append(roots, root)
+	}
+	g.dirtyRoots = make(map[string]struct{})
+	g.syncScheduleMu.Unlock()
+	if len(roots) == 0 {
+		return
+	}
+	g.syncMu.Lock()
+	defer g.syncMu.Unlock()
+	_, _ = g.syncWorkspacesLocked(ctx, roots)
 }
 
 func (g *Guard) pollLoop(ctx context.Context) {
@@ -506,9 +558,14 @@ func (g *Guard) pollLoop(ctx context.Context) {
 			if !hasSession {
 				continue
 			}
-			for _, ws := range g.state.ListWorkspaces() {
-				_, _ = g.SyncWorkspace(ctx, ws.RootPath)
+			workspaces := g.state.ListWorkspaces()
+			roots := make([]string, 0, len(workspaces))
+			for _, ws := range workspaces {
+				roots = append(roots, ws.RootPath)
 			}
+			g.syncMu.Lock()
+			_, _ = g.syncWorkspacesLocked(ctx, roots)
+			g.syncMu.Unlock()
 			if wasMissing {
 				g.clearLastSyncError()
 			}
@@ -577,43 +634,49 @@ func (g *Guard) SyncNow(ctx context.Context, rootPath ...string) ([]SyncSummary,
 		}
 		workspaces = []state.WorkspaceEntry{*ws}
 	}
-	var summaries []SyncSummary
+	g.syncMu.Lock()
+	defer g.syncMu.Unlock()
+	return g.syncWorkspacesLocked(ctx, workspaceRoots(workspaces))
+}
+
+func workspaceRoots(workspaces []state.WorkspaceEntry) []string {
+	roots := make([]string, 0, len(workspaces))
 	for _, ws := range workspaces {
-		if err := ctx.Err(); err != nil {
-			return summaries, err
-		}
-		summary, err := g.SyncWorkspace(ctx, ws.RootPath)
-		if err != nil {
-			return summaries, err
-		}
-		summaries = append(summaries, summary)
+		roots = append(roots, ws.RootPath)
 	}
-	return summaries, nil
+	return roots
 }
 
 // SyncWorkspace reconciles notes for one registered workspace.
 func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary, error) {
 	g.syncMu.Lock()
 	defer g.syncMu.Unlock()
+	summaries, err := g.syncWorkspacesLocked(ctx, []string{rootPath})
+	if err != nil {
+		return SyncSummary{Workspace: rootPath}, err
+	}
+	if len(summaries) == 0 {
+		return SyncSummary{Workspace: rootPath}, nil
+	}
+	return summaries[0], nil
+}
 
-	summary := SyncSummary{Workspace: rootPath}
+func (g *Guard) syncWorkspacesLocked(ctx context.Context, roots []string) ([]SyncSummary, error) {
+	if len(roots) == 0 {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !g.resolveSession(ctx) {
+		return nil, nil
+	}
+	if g.syncCycleHook != nil {
+		g.syncCycleHook()
+	}
 
 	g.mu.Lock()
 	st := g.state
-	g.mu.Unlock()
-
-	ws := st.FindWorkspace(rootPath)
-	if ws == nil {
-		return summary, fmt.Errorf("workspace not registered: %s", rootPath)
-	}
-	if err := ctx.Err(); err != nil {
-		return summary, err
-	}
-	if !g.resolveSession(ctx) {
-		return summary, nil
-	}
-
-	g.mu.Lock()
 	session := g.session
 	g.mu.Unlock()
 
@@ -623,7 +686,29 @@ func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary
 		g.session = ""
 		g.mu.Unlock()
 		_ = g.resolveSession(ctx)
-		return summary, nil
+		return nil, nil
+	}
+
+	var summaries []SyncSummary
+	for _, rootPath := range roots {
+		if err := ctx.Err(); err != nil {
+			return summaries, err
+		}
+		summary, err := g.reconcileWorkspaceLocked(ctx, st, session, rootPath)
+		if err != nil {
+			return summaries, err
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, nil
+}
+
+func (g *Guard) reconcileWorkspaceLocked(ctx context.Context, st *state.State, session, rootPath string) (SyncSummary, error) {
+	summary := SyncSummary{Workspace: rootPath}
+
+	ws := st.FindWorkspace(rootPath)
+	if ws == nil {
+		return summary, fmt.Errorf("workspace not registered: %s", rootPath)
 	}
 
 	folderID, err := g.client.GetFolderID(session, ws.Folder)
@@ -692,6 +777,17 @@ func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary
 		if err != nil {
 			g.setLastSyncError(err.Error())
 			return summary, nil
+		}
+		if decision.Action == ActionPushLocal || decision.Action == ActionConflictLocalWins {
+			if err := g.client.Sync(session); err != nil {
+				g.setLastSyncError(fmt.Sprintf("bw sync after push: %v", err))
+				return summary, nil
+			}
+			if refreshed, err := g.client.GetItem(session, entry.ItemID); err == nil {
+				if rev, err := refreshed.RevisionTime(); err == nil {
+					out.UpdatedEntry.RemoteRevisionAt = formatStateTime(rev)
+				}
+			}
 		}
 		hadConflict := entry.Conflict != ""
 		st.UpsertNote(out.UpdatedEntry)

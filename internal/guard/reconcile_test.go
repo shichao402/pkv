@@ -55,7 +55,7 @@ func TestDecideActionOnlyLocal(t *testing.T) {
 	}
 }
 
-func TestDecideActionBothSidesRemoteWins(t *testing.T) {
+func TestDecideActionBothSidesConflict(t *testing.T) {
 	last := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	entry := state.NoteEntry{
 		ContentHash:      hashContent("baseline"),
@@ -73,31 +73,8 @@ func TestDecideActionBothSidesRemoteWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecideAction() error = %v", err)
 	}
-	if decision.Action != ActionConflictRemoteWins {
-		t.Fatalf("action = %v, want ActionConflictRemoteWins", decision.Action)
-	}
-}
-
-func TestDecideActionBothSidesLocalWins(t *testing.T) {
-	last := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
-	entry := state.NoteEntry{
-		ContentHash:      hashContent("baseline"),
-		LastSyncedAt:     last.Format(time.RFC3339),
-		RemoteRevisionAt: last.Format(time.RFC3339),
-		LocalModifiedAt:  last.Format(time.RFC3339),
-	}
-	remote := types.Item{
-		Notes:        "remote-new",
-		RevisionDate: last.Add(2 * time.Minute).Format(time.RFC3339),
-	}
-	localMod := last.Add(5 * time.Minute)
-
-	decision, err := DecideAction(entry, remote, "local-new", localMod)
-	if err != nil {
-		t.Fatalf("DecideAction() error = %v", err)
-	}
-	if decision.Action != ActionConflictLocalWins {
-		t.Fatalf("action = %v, want ActionConflictLocalWins", decision.Action)
+	if decision.Action != ActionConflictSameSecond {
+		t.Fatalf("action = %v, want ActionConflictSameSecond", decision.Action)
 	}
 }
 
@@ -143,6 +120,29 @@ func TestDecideActionRapidLocalEditAfterOwnPush(t *testing.T) {
 	}
 	if decision.Action != ActionPushLocal {
 		t.Fatalf("action = %v, want ActionPushLocal for rapid local-only edit", decision.Action)
+	}
+}
+
+func TestDecideActionLocalOnlyAfterSync(t *testing.T) {
+	lastSync := time.Date(2024, 1, 1, 12, 5, 0, 0, time.UTC)
+	entry := state.NoteEntry{
+		ContentHash:      hashContent("123"),
+		LastSyncedAt:     lastSync.Format(time.RFC3339),
+		RemoteRevisionAt: lastSync.Format(time.RFC3339),
+		LocalModifiedAt:  lastSync.Format(time.RFC3339),
+	}
+	remote := types.Item{
+		Notes:        "123",
+		RevisionDate: lastSync.Format(time.RFC3339),
+	}
+	localMod := lastSync.Add(2 * time.Second)
+
+	decision, err := DecideAction(entry, remote, "1234", localMod)
+	if err != nil {
+		t.Fatalf("DecideAction() error = %v", err)
+	}
+	if decision.Action != ActionPushLocal {
+		t.Fatalf("action = %v, want ActionPushLocal when only local differs from state", decision.Action)
 	}
 }
 
