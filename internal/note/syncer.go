@@ -178,12 +178,10 @@ func planWrite(item types.Item, entry state.NoteEntry, tracked bool, targetDir, 
 	if err != nil {
 		return plannedWrite{}, []string{fmt.Sprintf("read local note '%s': %v", entry.FileName, err)}
 	}
-	if hasLocalFile && entry.ContentHash != "" && localHash != entry.ContentHash {
-		return plannedWrite{}, []string{fmt.Sprintf("local note '%s' was modified; use 'pkv edit %s note %s' or remove the local file before syncing", entry.FileName, folder, entry.FileName)}
-	}
 
 	write.oldPath = entry.FilePath
-	write.skipWrite = hasLocalFile && entry.ContentHash == write.contentHash && entry.FilePath == filePath && entry.FileName == item.Name
+	localModified := hasLocalFile && entry.ContentHash != "" && localHash != entry.ContentHash
+	write.skipWrite = hasLocalFile && (localModified || (entry.ContentHash == write.contentHash && entry.FilePath == filePath && entry.FileName == item.Name))
 	return write, nil
 }
 

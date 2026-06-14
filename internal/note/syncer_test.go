@@ -287,6 +287,40 @@ func TestSyncFolderPreflightAggregatesConflictsAndKeepsLocalState(t *testing.T) 
 	}
 }
 
+func TestPreflightAllowsTrackedLocalModification(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test")
+	if err := os.WriteFile(path, []byte("local-edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := &state.State{Notes: []state.NoteEntry{{
+		ItemID:      "item1",
+		Folder:      "PKV",
+		TargetDir:   absDir,
+		FileName:    "test",
+		FilePath:    path,
+		ContentHash: hashContent("remote"),
+	}}}
+
+	syncer := NewSyncer(st)
+	if err := syncer.Preflight([]types.Item{{ID: "item1", Name: "test", Notes: "remote"}}, nil, absDir, "PKV"); err != nil {
+		t.Fatalf("Preflight() error = %v, want nil", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read local file: %v", err)
+	}
+	if string(data) != "local-edit" {
+		t.Fatalf("local file = %q, want local-edit", string(data))
+	}
+}
+
 func TestSyncFolderFailsWhenMultipleRemoteNotesResolveToSamePath(t *testing.T) {
 	dir := t.TempDir()
 	syncer := NewSyncer(&state.State{})
