@@ -3,11 +3,8 @@ package guard
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/shichao402/pkv/internal/app"
 	"github.com/shichao402/pkv/internal/bw"
@@ -15,9 +12,6 @@ import (
 	"github.com/shichao402/pkv/internal/note"
 	"github.com/shichao402/pkv/internal/state"
 )
-
-const defaultPollInterval = 60 * time.Second
-const defaultSyncDebounce = 3 * time.Second
 
 type ConfigNeed struct {
 	Code    string `json:"code"`
@@ -43,50 +37,27 @@ type Status struct {
 	SessionPresent bool         `json:"session_present"`
 	SessionSource  string       `json:"session_source"`
 	SessionMissing bool         `json:"session_missing"`
-	WatchRunning   bool         `json:"watch_running"`
-	LastSyncError  string       `json:"last_sync_error,omitempty"`
 	NeedsUnlock    string       `json:"needs_unlock,omitempty"`
 }
 
-type ConflictNotifier func(notes []state.NoteEntry)
-
 type Guard struct {
-	state    *state.State
-	client   *bw.Client
-	session  string
-	pollEvery time.Duration
-	syncDebounce time.Duration
+	state   *state.State
+	client  *bw.Client
+	session string
 
 	mu             sync.Mutex
-	syncMu         sync.Mutex
-	syncScheduleMu sync.Mutex
-	dirtyRoots     map[string]struct{}
-	syncTimer      *time.Timer
-	syncCycleHook  func()
-	watcher        *Watcher
-	stop           context.CancelFunc
 	sessionSource  app.SessionSource
 	sessionMissing bool
-	watchRunning   bool
-	lastSyncError  string
 	lastInitResult InitResult
 	initRunning    bool
-	onConflict     ConflictNotifier
-}
-
-type SyncSummary struct {
-	Workspace string
-	Reconciled int
-	Conflicts  int
-	Skipped    int
 }
 
 type RegisterWorkspaceResult struct {
-	Entry              state.WorkspaceEntry `json:"entry"`
-	AlreadyRegistered  bool                 `json:"already_registered,omitempty"`
-	FolderValidated    bool                 `json:"folder_validated,omitempty"`
-	BootstrapSkipped   bool                 `json:"bootstrap_skipped,omitempty"`
-	BootstrapNotes     int                  `json:"bootstrap_notes,omitempty"`
+	Entry             state.WorkspaceEntry `json:"entry"`
+	AlreadyRegistered bool                 `json:"already_registered,omitempty"`
+	FolderValidated   bool                 `json:"folder_validated,omitempty"`
+	BootstrapSkipped  bool                 `json:"bootstrap_skipped,omitempty"`
+	BootstrapNotes    int                  `json:"bootstrap_notes,omitempty"`
 }
 
 func New(st *state.State, client *bw.Client, session string) *Guard {
@@ -97,21 +68,9 @@ func New(st *state.State, client *bw.Client, session string) *Guard {
 		state:          st,
 		client:         client,
 		session:        session,
-		pollEvery:      defaultPollInterval,
-		syncDebounce:   syncDebounceFromEnv(),
-		dirtyRoots:     make(map[string]struct{}),
 		sessionMissing: strings.TrimSpace(session) == "",
 		sessionSource:  app.SessionSourceNone,
 	}
-}
-
-func syncDebounceFromEnv() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("PKV_SYNC_DEBOUNCE")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-	}
-	return defaultSyncDebounce
 }
 
 func (g *Guard) SetSession(session string) {
@@ -147,28 +106,11 @@ func (g *Guard) ApplyResolvedSession(resolved app.ResolvedSession) {
 	g.sessionMissing = false
 }
 
-func (g *Guard) SetConflictNotifier(fn ConflictNotifier) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.onConflict = fn
-}
-
-func (g *Guard) notifyConflicts(notes []state.NoteEntry) {
-	g.mu.Lock()
-	fn := g.onConflict
-	g.mu.Unlock()
-	if fn != nil && len(notes) > 0 {
-		fn(notes)
-	}
-}
-
 func (g *Guard) Status() Status {
 	g.mu.Lock()
 	session := g.session
 	sessionMissing := g.sessionMissing
 	sessionSource := g.sessionSource
-	watchRunning := g.watchRunning
-	lastSyncError := g.lastSyncError
 	st := g.state
 	client := g.client
 	g.mu.Unlock()
@@ -177,8 +119,6 @@ func (g *Guard) Status() Status {
 		SessionPresent: session != "" && !sessionMissing,
 		SessionSource:  string(sessionSource),
 		SessionMissing: sessionMissing,
-		WatchRunning:   watchRunning,
-		LastSyncError:  lastSyncError,
 	}
 	if status.SessionMissing {
 		status.NeedsUnlock = app.NeedsUnlockMessage()
@@ -222,7 +162,7 @@ func (g *Guard) setLastInitResult(result InitResult) {
 	g.lastInitResult = result
 }
 
-// RunInitPipeline starts guard sync, resolves session, auto-registers, syncs, and saves state.
+// RunInitPipeline resolves session, auto-registers workspace from env, and saves state.
 func (g *Guard) RunInitPipeline(ctx context.Context) InitResult {
 	g.mu.Lock()
 	if g.initRunning {
@@ -248,21 +188,11 @@ func (g *Guard) RunInitPipeline(ctx context.Context) InitResult {
 		result.Steps = append(result.Steps, step)
 	}
 
-	if err := g.Start(ctx); err != nil {
-		record("start", false, err)
-		g.setLastInitResult(result)
-		return result
-	}
-	record("start", true, nil)
-
 	sessionOK := g.resolveSession(ctx)
 	record("resolve_session", sessionOK, nil)
 
 	_, regErr := g.AutoRegisterFromEnv(ctx)
 	record("auto_register", regErr == nil, regErr)
-
-	_, syncErr := g.SyncNow(ctx)
-	record("sync", syncErr == nil, syncErr)
 
 	g.mu.Lock()
 	st := g.state
@@ -274,54 +204,7 @@ func (g *Guard) RunInitPipeline(ctx context.Context) InitResult {
 	return result
 }
 
-func (g *Guard) Start(ctx context.Context) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.stop != nil {
-		return nil
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	g.stop = cancel
-	g.watcher = NewWatcher(g.onLocalChange)
-	for _, ws := range g.state.ListWorkspaces() {
-		_ = g.watcher.AddWorkspace(ws.RootPath)
-	}
-	if err := g.watcher.Start(runCtx); err != nil {
-		cancel()
-		g.stop = nil
-		g.watcher = nil
-		return err
-	}
-	g.watchRunning = true
-	go func() {
-		_ = g.resolveSession(runCtx)
-		g.pollLoop(runCtx)
-	}()
-	return nil
-}
-
-func (g *Guard) Stop() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.stop != nil {
-		g.stop()
-		g.stop = nil
-	}
-	if g.watcher != nil {
-		g.watcher.Stop()
-		g.watcher = nil
-	}
-	g.syncScheduleMu.Lock()
-	if g.syncTimer != nil {
-		g.syncTimer.Stop()
-		g.syncTimer = nil
-	}
-	g.dirtyRoots = make(map[string]struct{})
-	g.syncScheduleMu.Unlock()
-	g.watchRunning = false
-}
-
-// RegisterWorkspace validates, persists, watches, and bootstraps a workspace.
+// RegisterWorkspace validates, persists, and optionally bootstraps a workspace.
 func (g *Guard) RegisterWorkspace(ctx context.Context, rootPath, folder, targetDir string) (RegisterWorkspaceResult, error) {
 	g.mu.Lock()
 	st := g.state
@@ -344,7 +227,6 @@ func (g *Guard) RegisterWorkspace(ctx context.Context, rootPath, folder, targetD
 
 		folders, err := g.client.ListFolders(session)
 		if err != nil {
-			g.setLastSyncError(fmt.Sprintf("folder lookup: %v", err))
 			return result, fmt.Errorf("list Bitwarden folders: %w", err)
 		}
 		if !folderExists(folders, folder) {
@@ -369,15 +251,6 @@ func (g *Guard) RegisterWorkspace(ctx context.Context, rootPath, folder, targetD
 		result.BootstrapSkipped = true
 	}
 
-	g.mu.Lock()
-	watcher := g.watcher
-	g.mu.Unlock()
-	if watcher != nil {
-		if err := watcher.AddWorkspace(entry.RootPath); err != nil {
-			return result, fmt.Errorf("watch workspace: %w", err)
-		}
-	}
-
 	return result, nil
 }
 
@@ -392,27 +265,22 @@ func (g *Guard) bootstrapWorkspace(ctx context.Context, ws state.WorkspaceEntry)
 	g.mu.Unlock()
 
 	if err := g.client.Sync(session); err != nil {
-		g.setLastSyncError(fmt.Sprintf("bw sync: %v", err))
 		return 0, fmt.Errorf("sync vault: %w", err)
 	}
 
 	notes, sourceByID, err := g.loadMergedNotes(session, ws.Folder)
 	if err != nil {
-		g.setLastSyncError(err.Error())
 		return 0, err
 	}
 
 	syncer := note.NewSyncer(st)
 	synced, err := syncer.SyncFolderWithSources(notes, sourceByID, ws.TargetDir, ws.Folder)
 	if err != nil {
-		g.setLastSyncError(fmt.Sprintf("bootstrap sync: %v", err))
 		return 0, err
 	}
 	if err := st.Save(); err != nil {
-		g.setLastSyncError(fmt.Sprintf("save state: %v", err))
 		return synced, fmt.Errorf("save state: %w", err)
 	}
-	g.clearLastSyncError()
 	return synced, nil
 }
 
@@ -441,45 +309,6 @@ func (g *Guard) loadMergedNotes(session, folder string) ([]types.Item, map[strin
 		sourceByID[it.Item.ID] = it.Source
 	}
 	return notes, sourceByID, nil
-}
-
-func (g *Guard) pullNewNotes(ctx context.Context, ws state.WorkspaceEntry) (int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-
-	g.mu.Lock()
-	st := g.state
-	session := g.session
-	g.mu.Unlock()
-
-	notes, sourceByID, err := g.loadMergedNotes(session, ws.Folder)
-	if err != nil {
-		return 0, err
-	}
-
-	tracked := make(map[string]struct{})
-	for _, entry := range st.FindSyncedNotes(ws.Folder, ws.TargetDir) {
-		tracked[entry.ItemID] = struct{}{}
-	}
-
-	var newNotes []types.Item
-	newSources := make(map[string]string)
-	for _, item := range notes {
-		if _, ok := tracked[item.ID]; ok {
-			continue
-		}
-		newNotes = append(newNotes, item)
-		if src, ok := sourceByID[item.ID]; ok {
-			newSources[item.ID] = src
-		}
-	}
-	if len(newNotes) == 0 {
-	 return 0, nil
-	}
-
-	syncer := note.NewSyncer(st)
-	return syncer.SyncFolderWithSources(newNotes, newSources, ws.TargetDir, ws.Folder)
 }
 
 // AutoRegisterFromEnv registers PKV_WORKSPACE_ROOT when not already registered.
@@ -513,77 +342,9 @@ func (g *Guard) AutoRegisterFromEnv(ctx context.Context) (RegisterWorkspaceResul
 	return result, nil
 }
 
-func (g *Guard) onLocalChange(rootPath string) {
-	g.scheduleSync(rootPath)
-}
-
-func (g *Guard) scheduleSync(rootPath string) {
-	g.syncScheduleMu.Lock()
-	defer g.syncScheduleMu.Unlock()
-	g.dirtyRoots[rootPath] = struct{}{}
-	if g.syncTimer != nil {
-		g.syncTimer.Stop()
-	}
-	g.syncTimer = time.AfterFunc(g.syncDebounce, func() {
-		g.runDebouncedSync(context.Background())
-	})
-}
-
-func (g *Guard) isWorkspaceDirty(rootPath string) bool {
-	g.syncScheduleMu.Lock()
-	defer g.syncScheduleMu.Unlock()
-	_, ok := g.dirtyRoots[rootPath]
-	return ok
-}
-
-func (g *Guard) runDebouncedSync(ctx context.Context) {
-	g.syncScheduleMu.Lock()
-	roots := make([]string, 0, len(g.dirtyRoots))
-	for root := range g.dirtyRoots {
-		roots = append(roots, root)
-	}
-	g.dirtyRoots = make(map[string]struct{})
-	g.syncScheduleMu.Unlock()
-	if len(roots) == 0 {
-		return
-	}
-	g.syncMu.Lock()
-	defer g.syncMu.Unlock()
-	_, _ = g.syncWorkspacesLocked(ctx, roots, false)
-}
-
-func (g *Guard) pollLoop(ctx context.Context) {
-	ticker := time.NewTicker(g.pollEvery)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			wasMissing := g.sessionWasMissing()
-			hasSession := g.resolveSession(ctx)
-			if !hasSession {
-				continue
-			}
-			workspaces := g.state.ListWorkspaces()
-			roots := make([]string, 0, len(workspaces))
-			for _, ws := range workspaces {
-				roots = append(roots, ws.RootPath)
-			}
-			g.syncMu.Lock()
-			_, _ = g.syncWorkspacesLocked(ctx, roots, true)
-			g.syncMu.Unlock()
-			if wasMissing {
-				g.clearLastSyncError()
-			}
-		}
-	}
-}
-
-func (g *Guard) sessionWasMissing() bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.sessionMissing
+// ResolveSessionFromSources reloads session from memory, env, or ~/.pkv/session.
+func (g *Guard) ResolveSessionFromSources(ctx context.Context) bool {
+	return g.resolveSession(ctx)
 }
 
 func (g *Guard) resolveSession(ctx context.Context) bool {
@@ -600,7 +361,6 @@ func (g *Guard) resolveSession(ctx context.Context) bool {
 		g.session = ""
 		g.sessionSource = app.SessionSourceNone
 		g.sessionMissing = true
-		g.lastSyncError = err.Error()
 		return false
 	}
 	if !resolved.Valid {
@@ -614,419 +374,4 @@ func (g *Guard) resolveSession(ctx context.Context) bool {
 	g.sessionSource = resolved.Source
 	g.sessionMissing = false
 	return true
-}
-
-func (g *Guard) clearLastSyncError() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.lastSyncError = ""
-}
-
-func (g *Guard) setLastSyncError(msg string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.lastSyncError = msg
-}
-
-// SyncNow reconciles all registered workspaces, or one when rootPath is set.
-func (g *Guard) SyncNow(ctx context.Context, rootPath ...string) ([]SyncSummary, error) {
-	if !g.resolveSession(ctx) {
-		return nil, nil
-	}
-	workspaces := g.state.ListWorkspaces()
-	if len(rootPath) > 0 && rootPath[0] != "" {
-		ws := g.state.FindWorkspace(rootPath[0])
-		if ws == nil {
-			return nil, fmt.Errorf("workspace not registered: %s", rootPath[0])
-		}
-		workspaces = []state.WorkspaceEntry{*ws}
-	}
-	g.syncMu.Lock()
-	defer g.syncMu.Unlock()
-	return g.syncWorkspacesLocked(ctx, workspaceRoots(workspaces), false)
-}
-
-func workspaceRoots(workspaces []state.WorkspaceEntry) []string {
-	roots := make([]string, 0, len(workspaces))
-	for _, ws := range workspaces {
-		roots = append(roots, ws.RootPath)
-	}
-	return roots
-}
-
-// SyncWorkspace reconciles notes for one registered workspace.
-func (g *Guard) SyncWorkspace(ctx context.Context, rootPath string) (SyncSummary, error) {
-	g.syncMu.Lock()
-	defer g.syncMu.Unlock()
-	summaries, err := g.syncWorkspacesLocked(ctx, []string{rootPath}, false)
-	if err != nil {
-		return SyncSummary{Workspace: rootPath}, err
-	}
-	if len(summaries) == 0 {
-		return SyncSummary{Workspace: rootPath}, nil
-	}
-	return summaries[0], nil
-}
-
-func (g *Guard) syncWorkspacesLocked(ctx context.Context, roots []string, pollCycle bool) ([]SyncSummary, error) {
-	if len(roots) == 0 {
-		return nil, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if !g.resolveSession(ctx) {
-		return nil, nil
-	}
-	if g.syncCycleHook != nil {
-		g.syncCycleHook()
-	}
-
-	g.mu.Lock()
-	st := g.state
-	session := g.session
-	g.mu.Unlock()
-
-	if err := g.client.Sync(session); err != nil {
-		g.setLastSyncError(fmt.Sprintf("bw sync: %v", err))
-		g.mu.Lock()
-		g.session = ""
-		g.mu.Unlock()
-		_ = g.resolveSession(ctx)
-		return nil, nil
-	}
-
-	var summaries []SyncSummary
-	for _, rootPath := range roots {
-		if err := ctx.Err(); err != nil {
-			return summaries, err
-		}
-		if pollCycle && g.isWorkspaceDirty(rootPath) {
-			summary, err := g.pullNewNotesForWorkspace(ctx, st, session, rootPath)
-			if err != nil {
-				return summaries, err
-			}
-			summaries = append(summaries, summary)
-			continue
-		}
-		summary, err := g.reconcileWorkspaceLocked(ctx, st, session, rootPath, pollCycle)
-		if err != nil {
-			return summaries, err
-		}
-		summaries = append(summaries, summary)
-	}
-	return summaries, nil
-}
-
-func (g *Guard) pullNewNotesForWorkspace(ctx context.Context, st *state.State, session, rootPath string) (SyncSummary, error) {
-	summary := SyncSummary{Workspace: rootPath}
-	ws := st.FindWorkspace(rootPath)
-	if ws == nil {
-		return summary, fmt.Errorf("workspace not registered: %s", rootPath)
-	}
-	newSynced, err := g.pullNewNotes(ctx, *ws)
-	if err != nil {
-		g.setLastSyncError(fmt.Sprintf("pull new notes: %v", err))
-		return summary, nil
-	}
-	summary.Reconciled += newSynced
-	if err := st.Save(); err != nil {
-		g.setLastSyncError(fmt.Sprintf("save state: %v", err))
-		return summary, nil
-	}
-	g.clearLastSyncError()
-	return summary, nil
-}
-
-func (g *Guard) reconcileWorkspaceLocked(ctx context.Context, st *state.State, session, rootPath string, pollCycle bool) (SyncSummary, error) {
-	summary := SyncSummary{Workspace: rootPath}
-
-	ws := st.FindWorkspace(rootPath)
-	if ws == nil {
-		return summary, fmt.Errorf("workspace not registered: %s", rootPath)
-	}
-
-	folderID, err := g.client.GetFolderID(session, ws.Folder)
-	if err != nil {
-		g.setLastSyncError(fmt.Sprintf("folder lookup: %v", err))
-		g.mu.Lock()
-		g.session = ""
-		g.mu.Unlock()
-		_ = g.resolveSession(ctx)
-		return summary, nil
-	}
-	items, err := g.client.ListItems(session, folderID)
-	if err != nil {
-		g.setLastSyncError(fmt.Sprintf("list items: %v", err))
-		g.mu.Lock()
-		g.session = ""
-		g.mu.Unlock()
-		_ = g.resolveSession(ctx)
-		return summary, nil
-	}
-	notes := bw.FilterConfigNotes(items)
-	remoteByID := make(map[string]types.Item, len(notes))
-	for _, item := range notes {
-		remoteByID[item.ID] = item
-	}
-
-	syncer := note.NewSyncer(st)
-	if err := syncer.Preflight(notes, nil, ws.TargetDir, ws.Folder); err != nil {
-		g.setLastSyncError(fmt.Sprintf("structural preflight aborted: %v", err))
-		return summary, nil
-	}
-
-	pusher := BWNotePusher{Client: g.client, Session: session}
-	tracked := st.FindSyncedNotes(ws.Folder, ws.TargetDir)
-	var newConflicts []state.NoteEntry
-	for _, entry := range tracked {
-		if err := ctx.Err(); err != nil {
-			return summary, err
-		}
-		remote, ok := remoteByID[entry.ItemID]
-		if !ok {
-			summary.Skipped++
-			continue
-		}
-		localContent, localMod, err := readLocalNote(entry.FilePath)
-		if err != nil {
-			g.setLastSyncError(err.Error())
-			return summary, nil
-		}
-		decision, err := DecideAction(entry, remote, localContent, localMod)
-		if err != nil {
-			g.setLastSyncError(err.Error())
-			return summary, nil
-		}
-		decision = guardPollPendingEdit(pollCycle, entry, localContent, decision)
-		if decision.Action == ActionNoop {
-			summary.Skipped++
-			continue
-		}
-		out, err := ReconcileNote(ReconcileInput{
-			Entry:         entry,
-			Remote:        remote,
-			LocalContent:  localContent,
-			LocalModTime:  localMod,
-			WorkspaceRoot: ws.RootPath,
-		}, decision, pusher)
-		if err != nil {
-			g.setLastSyncError(err.Error())
-			return summary, nil
-		}
-		if decision.Action == ActionPushLocal || decision.Action == ActionConflictLocalWins {
-			if err := g.client.Sync(session); err != nil {
-				g.setLastSyncError(fmt.Sprintf("bw sync after push: %v", err))
-				return summary, nil
-			}
-			if refreshed, err := g.client.GetItem(session, entry.ItemID); err == nil {
-				if rev, err := refreshed.RevisionTime(); err == nil {
-					out.UpdatedEntry.RemoteRevisionAt = formatStateTime(rev)
-				}
-			}
-		}
-		hadConflict := entry.Conflict != ""
-		st.UpsertNote(out.UpdatedEntry)
-		if out.UpdatedEntry.Conflict != "" {
-			summary.Conflicts++
-			if !hadConflict {
-				newConflicts = append(newConflicts, out.UpdatedEntry)
-			}
-		} else {
-			summary.Reconciled++
-		}
-	}
-	g.notifyConflicts(newConflicts)
-	newSynced, err := g.pullNewNotes(ctx, *ws)
-	if err != nil {
-		g.setLastSyncError(fmt.Sprintf("pull new notes: %v", err))
-		return summary, nil
-	}
-	summary.Reconciled += newSynced
-	if err := st.Save(); err != nil {
-		g.setLastSyncError(fmt.Sprintf("save state: %v", err))
-		return summary, nil
-	}
-	g.clearLastSyncError()
-	return summary, nil
-}
-
-func readLocalNote(path string) (content string, modTime time.Time, err error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", time.Time{}, nil
-		}
-		return "", time.Time{}, err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return string(data), time.Time{}, nil
-	}
-	return string(data), info.ModTime().UTC(), nil
-}
-
-// PushNote uploads the local tracked note to Bitwarden.
-func (g *Guard) PushNote(ctx context.Context, itemID, folder, targetDir string) error {
-	return g.syncNote(ctx, itemID, folder, targetDir, ActionPushLocal)
-}
-
-// PullNote downloads the remote note into the local tracked file.
-func (g *Guard) PullNote(ctx context.Context, itemID, folder, targetDir string) error {
-	return g.syncNote(ctx, itemID, folder, targetDir, ActionPullRemote)
-}
-
-func (g *Guard) syncNote(ctx context.Context, itemID, folder, targetDir string, action NoteAction) error {
-	if !g.resolveSession(ctx) {
-		return fmt.Errorf("no valid Bitwarden session; %s", app.NeedsUnlockMessage())
-	}
-
-	g.mu.Lock()
-	st := g.state
-	session := g.session
-	g.mu.Unlock()
-
-	entry := st.FindNoteEntry(itemID, folder, targetDir)
-	if entry == nil {
-		return fmt.Errorf("note entry not found")
-	}
-
-	remote, err := g.client.GetItem(session, itemID)
-	if err != nil {
-		return err
-	}
-
-	localContent, localMod, err := readLocalNote(entry.FilePath)
-	if err != nil {
-		return err
-	}
-
-	ws := findWorkspaceForNote(st, folder, targetDir, entry.TargetDir)
-	if ws == nil {
-		return fmt.Errorf("workspace not found for note")
-	}
-
-	var pusher NotePusher
-	if action == ActionPushLocal {
-		pusher = BWNotePusher{Client: g.client, Session: session}
-	}
-
-	out, err := ReconcileNote(ReconcileInput{
-		Entry:         *entry,
-		Remote:        remote,
-		LocalContent:  localContent,
-		LocalModTime:  localMod,
-		WorkspaceRoot: ws.RootPath,
-	}, ReconcileDecision{Action: action}, pusher)
-	if err != nil {
-		return err
-	}
-
-	st.UpsertNote(out.UpdatedEntry)
-	return st.Save()
-}
-
-// ResolveConflict clears a pending conflict by choosing local or remote copy.
-func (g *Guard) ResolveConflict(ctx context.Context, itemID, folder, targetDir, choice string) error {
-	if !g.resolveSession(ctx) {
-		return fmt.Errorf("no valid Bitwarden session; %s", app.NeedsUnlockMessage())
-	}
-
-	g.mu.Lock()
-	st := g.state
-	session := g.session
-	g.mu.Unlock()
-
-	entry := st.FindNoteEntry(itemID, folder, targetDir)
-	if entry == nil {
-		return fmt.Errorf("note entry not found")
-	}
-	if entry.Conflict == "" {
-		return fmt.Errorf("note has no active conflict")
-	}
-	ws := findWorkspaceForNote(st, folder, targetDir, entry.TargetDir)
-	if ws == nil {
-		return fmt.Errorf("workspace not found for note")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	remote, err := g.client.GetItem(session, itemID)
-	if err != nil {
-		return err
-	}
-	localContent, localMod, err := readLocalNote(entry.FilePath)
-	if err != nil {
-		return err
-	}
-
-	decision, err := parseConflictChoice(choice)
-	if err != nil {
-		return err
-	}
-
-	pusher := BWNotePusher{Client: g.client, Session: session}
-	out, err := ReconcileNote(ReconcileInput{
-		Entry:         *entry,
-		Remote:        remote,
-		LocalContent:  localContent,
-		LocalModTime:  localMod,
-		WorkspaceRoot: ws.RootPath,
-	}, decision, pusher)
-	if err != nil {
-		return err
-	}
-	out.UpdatedEntry.Conflict = state.ConflictNone
-	st.UpsertNote(out.UpdatedEntry)
-	if err := st.Save(); err != nil {
-		return err
-	}
-	_, err = DeleteConflictCopies(ws.RootPath, itemID)
-	return err
-}
-
-func parseConflictChoice(choice string) (ReconcileDecision, error) {
-	switch choice {
-	case "local", "keep_local":
-		return ReconcileDecision{Action: ActionPushLocal}, nil
-	case "remote", "keep_remote":
-		return ReconcileDecision{Action: ActionPullRemote}, nil
-	default:
-		return ReconcileDecision{}, fmt.Errorf("choice must be keep_local, keep_remote, local, or remote")
-	}
-}
-
-func findWorkspaceForNote(st *state.State, folder, targetDir, entryTargetDir string) *state.WorkspaceEntry {
-	if targetDir != "" {
-		if ws, err := FindWorkspaceByFolderTarget(st, folder, targetDir); err == nil {
-			return ws
-		}
-	}
-	matchTarget := entryTargetDir
-	if matchTarget == "" {
-		matchTarget = targetDir
-	}
-	if matchTarget != "" {
-		absTarget, err := filepath.Abs(matchTarget)
-		if err == nil {
-			for _, ws := range st.ListWorkspaces() {
-				wsTarget := ws.TargetDir
-				if wsTarget == "" {
-					wsTarget = ws.RootPath
-				}
-				if ws.Folder == folder && wsTarget == absTarget {
-					found := ws
-					return &found
-				}
-			}
-		}
-	}
-	for _, ws := range st.ListWorkspaces() {
-		if ws.Folder == folder {
-			found := ws
-			return &found
-		}
-	}
-	return nil
 }

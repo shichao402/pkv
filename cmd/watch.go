@@ -15,7 +15,7 @@ import (
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
-	Short: "Manage guard sync workspaces",
+	Short: "Manage guard workspaces",
 }
 
 var watchListCmd = &cobra.Command{
@@ -32,7 +32,7 @@ var (
 
 var watchAddCmd = &cobra.Command{
 	Use:   "add <root_path>",
-	Short: "Register a workspace for guard note sync",
+	Short: "Register a workspace for note sync",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWatchAdd,
 }
@@ -46,7 +46,7 @@ var watchRemoveCmd = &cobra.Command{
 
 var watchStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show guard sync status",
+	Short: "Show guard status",
 	Args:  cobra.NoArgs,
 	RunE:  runWatchStatus,
 }
@@ -146,7 +146,6 @@ func runWatchStatus(cmd *cobra.Command, _ []string) error {
 	}
 	payload := map[string]any{
 		"workspaces": len(guard.ListRegisteredWorkspaces(st)),
-		"conflicts":  len(st.ListConflictNotes()),
 	}
 	for k, v := range structToMap(g.Status()) {
 		payload[k] = v

@@ -601,32 +601,59 @@ TUI 的 unlock **不会把 session 打到屏幕上**，只确认解锁成功。s
 
 如果你的使用场景看起来缺了 `--master-pass` 才能做到，多半说明正确做法是先 `pkv unlock`（或 `bw unlock --raw`）拿 session，再让 PKV 使用它。
 
-## Guard Sync / MCP Agent 使用
+## Guard / MCP Agent 使用
 
-PKV 提供 MCP server（`pkv mcp`），供 Cursor 等 Agent 自动同步 Bitwarden note。通过 dec 部署时为 **`dec-pkv-mcp`**，并注入 `PKV_WORKSPACE_ROOT=${workspaceFolder}`。
+PKV 提供 MCP server（`pkv mcp`），供 Cursor 等 Agent 手动同步 Bitwarden note。通过 dec 部署时为 **`dec-pkv-mcp`**，并注入 `PKV_WORKSPACE_ROOT=${workspaceFolder}`。
 
-### 零 touch 流程（推荐）
+**Note 不会自动同步**——没有文件 watch、没有后台 poll。需要时用 MCP 工具显式 download/upload。
 
-1. 终端执行一次 **`pkv unlock`**（写入 `~/.pkv/session`）。
-2. 在 Cursor 启用 **`dec-pkv-mcp`** 并 Reload MCP。
-3. MCP 启动后会**自动**：
+### 初始化流程（推荐）
+
+1. 在 Cursor 启用 **`dec-pkv-mcp`** 并 Reload MCP。
+2. MCP 启动后会**自动**：
+   - 解析已有 Bitwarden session（`~/.pkv/session` 或 `BW_SESSION`）
    - 注册当前项目 workspace（folder 解析顺序：`.pkv/workspace.yaml` → `.dec/config.yaml` 的 `pkv_folder` → 项目目录名；与 Bitwarden folder **忽略大小写**匹配）
-   - 立即 sync + 持续 watch（远端**新加** note 也会在 poll 中自动 pull）
-4. 无 session 时 Guard **继续运行**，`pkv_status` 会提示需要 unlock；unlock 后自动恢复 sync。
+3. 无 session 时 `pkv://guard` 会显示 `needs_unlock`；**不会**在 init 时弹出解锁页。
+4. 首次调用 **`pkv_download`** 或 **`pkv_upload`** 时，若无有效 session，会自动在浏览器打开本地解锁页（`127.0.0.1` 随机端口）；输入主密码后写入 `~/.pkv/session` 并继续同步。
+5. 也可在终端先执行 **`pkv unlock`**（同样写入 `~/.pkv/session`），CLI/TUI 仍走终端交互，不使用 web 解锁。
 
-Agent **通常无需**手动 `pkv_register_workspace`，除非 folder 无法自动推断（可在 `.dec/config.yaml` 写 `pkv_folder: PKV` 或 `.pkv/workspace.yaml` 写 `folder: PKV`）。
+Agent **通常无需**手动 `pkv_register_workspace`，除非 `pkv://guard` 的 `needs_config` 提示 workspace 未注册且 folder 无法自动推断（可在 `.dec/config.yaml` 写 `pkv_folder: PKV` 或 `.pkv/workspace.yaml` 写 `folder: PKV`）。
 
-### 典型流程（手动 / 多项目）
+### MCP 面（精简后）
 
-1. **解锁**：Agent 调用 `pkv_unlock`。若用户已在终端执行 `pkv unlock`，Guard 会从 `~/.pkv/session` 或 `BW_SESSION` 恢复 session 并自动触发 sync。也可传入 `session` 参数直接注入并持久化。
-2. **注册 workspace**：`pkv_register_workspace`，传入 `root_path`（项目根）、`folder`（Bitwarden folder）、可选 `target_dir`（note 同步目录，默认等于 `root_path`）。若项目是 git 仓库，响应会建议将 `.pkv/conflicts/` 加入 `.gitignore`。
-3. **查看状态**：`pkv_status` 返回 workspace 数量、冲突数、session 状态、watch 是否在跑。
-4. **手动同步**：`pkv_sync_now` 同步全部 workspace；也可传 `workspace_id`（即 `root_path`）或 `folder`+`target_dir` 只同步一个。
-5. **冲突处理**：
-   - `pkv_list_conflicts` 列出 state 中的冲突 note 及 `.pkv/conflicts/` 下的副本文件
-   - `pkv_resolve_conflict` 用 `keep_local` 或 `keep_remote`（兼容 `local`/`remote`）选定版本；resolve 后会删除该 item 在 `.pkv/conflicts/` 的副本
+| 类型 | 名称 | 用途 |
+|------|------|------|
+| 资源 | `pkv://guard` | init 状态、已注册 workspace、session、`needs_config` |
+| 工具 | `pkv_download` | 从 Bitwarden 拉取 note 到本地 |
+| 工具 | `pkv_upload` | 将本地 note 推送到 Bitwarden |
+| 工具 | `pkv_register_workspace` | 仅当 auto-register 失败时手动注册 |
 
-其他工具：`pkv_list_workspaces` 列出已注册 workspace；`pkv_unregister_workspace` 取消注册。
+### 手动同步
+
+推荐通过 Cursor Agent 斜杠命令或 MCP 工具：
+
+- **`/pkv/pkv-download`** — 从 Bitwarden 拉取 note 到本地
+- **`/pkv/pkv-upload`** — 将本地 note 推送到 Bitwarden
+
+斜杠命令后可选跟一个 note 名或 item_id；省略则同步全部 tracked note。
+
+1. **解锁**（任选其一）：
+   - 调用 **`pkv_download`** / **`pkv_upload`**：无 session 时自动打开浏览器解锁页
+   - 终端执行 **`pkv unlock`**（写入 `~/.pkv/session`），CLI/TUI 不使用 web 解锁
+2. **注册 workspace**（如 `needs_config` 要求）：`pkv_register_workspace`，传入 `root_path`（项目根）、`folder`（Bitwarden folder）、可选 `target_dir`（note 目录，默认等于 `root_path`）。首次注册且 session 有效时会 bootstrap 下载远端 note。
+3. **下载**：`pkv_download` — 省略 `note` 或传 `all` 下载全部 tracked note（含远端新增）；传 item_id 或文件名下载单个 note。覆盖本地前会备份到 `~/.pkv/backups/<item_id>/`（每 note 最多保留 30 份）。
+4. **上传**：`pkv_upload` — 同上，将本地 tracked note 推送到 Bitwarden。覆盖远端前会备份远端内容到同一备份目录。
+5. **查看状态**：读取 `pkv://guard` 资源。
+
+### 备份
+
+手动 download/upload 在覆盖前会写入：
+
+```text
+~/.pkv/backups/<item_id>/<timestamp>_<local|remote>_<filename>
+```
+
+每个 item_id 目录最多保留 **30** 份备份，超出时删除最旧的。
 
 ## 本地产物与状态文件
 
@@ -637,6 +664,8 @@ PKV 会写这些位置：
 ~/.ssh/known_hosts          # 仅清理：PKV ≤0.9 可能写过 PKV MANAGED 区块；新版本只删不加
 ~/.ssh/pkv_*
 ~/.pkv/state.json
+~/.pkv/session
+~/.pkv/backups/<item_id>/
 ~/.pkv/env/<folder>.json
 ~/.pkv/env/<folder>.sh
 ~/.pkv/env/<folder>.ps1

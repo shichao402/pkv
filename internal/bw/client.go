@@ -367,6 +367,65 @@ func (c *Client) unlock() (string, error) {
 	return session, nil
 }
 
+const unlockPasswordEnvVar = "PKV_BW_MASTER_PASSWORD"
+
+// UnlockWithPassword unlocks the vault non-interactively using the master password.
+func (c *Client) UnlockWithPassword(password string) (string, error) {
+	if err := c.checkBWInstalled(); err != nil {
+		return "", err
+	}
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return "", fmt.Errorf("master password is empty")
+	}
+
+	status, err := c.getStatus()
+	if err != nil {
+		return "", fmt.Errorf("failed to get bw status: %w", err)
+	}
+	switch status.Status {
+	case "unauthenticated":
+		return "", fmt.Errorf("Bitwarden not logged in; run 'bw login' in a terminal first")
+	case "locked", "unlocked":
+		session, err := c.unlockWithPassword(password)
+		if err != nil {
+			return "", err
+		}
+		if err := c.validateSession(session); err != nil {
+			return "", fmt.Errorf("validate unlocked BW_SESSION: %w", err)
+		}
+		return session, nil
+	default:
+		return "", fmt.Errorf("unknown bw status: %s", status.Status)
+	}
+}
+
+func (c *Client) unlockWithPassword(password string) (string, error) {
+	diag.Printf("running non-interactive bw unlock")
+	if err := os.Setenv(unlockPasswordEnvVar, password); err != nil {
+		return "", err
+	}
+	defer os.Unsetenv(unlockPasswordEnvVar)
+
+	cmd := c.command("--raw", "unlock", "--passwordenv", unlockPasswordEnvVar)
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := strings.TrimSpace(string(exitErr.Stderr))
+			if stderr != "" {
+				return "", fmt.Errorf("bw unlock failed: %s", stderr)
+			}
+		}
+		return "", fmt.Errorf("bw unlock failed: %w", err)
+	}
+	session, err := parseUnlockSession(out)
+	if err != nil {
+		return "", err
+	}
+	diag.Printf("bw unlock returned session %s", diag.RedactSecret(session))
+	return session, nil
+}
+
 func (c *Client) unlockAndCache() (string, error) {
 	session, err := c.unlock()
 	if err != nil {

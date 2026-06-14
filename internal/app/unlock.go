@@ -22,6 +22,20 @@ func Unlock(ctx context.Context, _ UnlockParams, r Reporter) (UnlockResult, erro
 	if err != nil {
 		return UnlockResult{}, fmt.Errorf("authentication failed: %w", err)
 	}
+	return persistUnlockSession(ctx, session)
+}
+
+// UnlockWithPassword unlocks Bitwarden using the master password (non-interactive).
+func UnlockWithPassword(ctx context.Context, password string) (UnlockResult, error) {
+	client := bw.NewClient()
+	session, err := client.UnlockWithPassword(password)
+	if err != nil {
+		return UnlockResult{}, fmt.Errorf("authentication failed: %w", err)
+	}
+	return persistUnlockSession(ctx, session)
+}
+
+func persistUnlockSession(ctx context.Context, session string) (UnlockResult, error) {
 	if err := ctx.Err(); err != nil {
 		return UnlockResult{}, err
 	}

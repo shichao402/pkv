@@ -117,28 +117,6 @@ func FindWorkspaceByFolderTarget(st *state.State, folder, targetDir string) (*st
 	return nil, fmt.Errorf("workspace not registered for folder=%s target_dir=%s", folder, absTarget)
 }
 
-// ResolveSyncWorkspace picks one workspace for targeted sync.
-func ResolveSyncWorkspace(st *state.State, workspaceID, folder, targetDir string) (*state.WorkspaceEntry, error) {
-	switch {
-	case workspaceID != "":
-		return FindWorkspaceByID(st, workspaceID)
-	case folder != "" && targetDir != "":
-		return FindWorkspaceByFolderTarget(st, folder, targetDir)
-	case folder != "" || targetDir != "":
-		return nil, fmt.Errorf("folder and target_dir must be provided together")
-	default:
-		return nil, nil
-	}
-}
-
-// GitIgnoreSuggestion returns a gitignore line when root is a git repo.
-func GitIgnoreSuggestion(rootPath string) (string, bool) {
-	if _, err := os.Stat(filepath.Join(rootPath, ".git")); err != nil {
-		return "", false
-	}
-	return ".pkv/conflicts/", true
-}
-
 // UnregisterWorkspace removes a workspace registration from state.
 func UnregisterWorkspace(st *state.State, rootPath string) error {
 	if st == nil {

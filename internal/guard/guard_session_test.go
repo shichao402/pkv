@@ -9,21 +9,13 @@ import (
 	"github.com/shichao402/pkv/internal/state"
 )
 
-func TestGuardStartWithoutSessionDoesNotPanic(t *testing.T) {
+func TestGuardStatusWithoutSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("BW_SESSION", "")
 
 	st := &state.State{}
 	g := New(st, nil, "")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := g.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	defer g.Stop()
 
 	status := g.Status()
 	if !status.SessionMissing {
@@ -34,33 +26,7 @@ func TestGuardStartWithoutSessionDoesNotPanic(t *testing.T) {
 	}
 }
 
-func TestGuardSyncWithoutSessionSkipsGracefully(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("BW_SESSION", "")
-
-	st := &state.State{}
-	g := New(st, nil, "")
-	root := t.TempDir()
-	if _, _, err := RegisterWorkspace(st, root, "test-folder", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	summary, err := g.SyncWorkspace(context.Background(), root)
-	if err != nil {
-		t.Fatalf("SyncWorkspace() error = %v, want nil", err)
-	}
-	if summary.Workspace == "" {
-		t.Fatal("summary workspace is empty")
-	}
-
-	status := g.Status()
-	if !status.SessionMissing {
-		t.Fatalf("SessionMissing = false, want true")
-	}
-}
-
-func TestGuardSyncNowRecoversSessionFromFile(t *testing.T) {
+func TestGuardResolveSessionFromFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("BW_SESSION", "")
@@ -74,10 +40,6 @@ func TestGuardSyncNowRecoversSessionFromFile(t *testing.T) {
 	defer restore()
 
 	st := &state.State{}
-	root := t.TempDir()
-	if _, _, err := RegisterWorkspace(st, root, "test-folder", ""); err != nil {
-		t.Fatal(err)
-	}
 	g := New(st, nil, "")
 
 	if status := g.Status(); !status.SessionMissing {
@@ -88,8 +50,8 @@ func TestGuardSyncNowRecoversSessionFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := g.SyncNow(context.Background()); err != nil {
-		t.Fatalf("SyncNow() error = %v", err)
+	if !g.resolveSession(context.Background()) {
+		t.Fatal("resolveSession() = false, want true")
 	}
 
 	status := g.Status()
