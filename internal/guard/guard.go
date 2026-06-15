@@ -230,7 +230,7 @@ func (g *Guard) RegisterWorkspace(ctx context.Context, rootPath, folder, targetD
 			return result, fmt.Errorf("list Bitwarden folders: %w", err)
 		}
 		if !folderExists(folders, folder) {
-			return result, fmt.Errorf("Bitwarden folder not found: %s", folder)
+			return result, fmt.Errorf("bitwarden folder not found: %s", folder)
 		}
 		canonical, _ := MatchFolderName(folders, folder)
 		if canonical != "" && entry.Folder != canonical {
@@ -304,7 +304,8 @@ func (g *Guard) loadMergedNotes(session, folder string) ([]types.Item, map[strin
 	merged := note.MergeNoteItems(chainNames, itemsByFolder)
 	notes := make([]types.Item, 0, len(merged.Items))
 	sourceByID := make(map[string]string, len(merged.Items))
-	for _, it := range merged.Items {
+	for i := range merged.Items {
+		it := merged.Items[i]
 		notes = append(notes, it.Item)
 		sourceByID[it.Item.ID] = it.Source
 	}

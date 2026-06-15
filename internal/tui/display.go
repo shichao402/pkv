@@ -54,7 +54,8 @@ func displayItemsForTab(tab resourceTab, res app.BrowseResources) []resourceDisp
 	case tabNotes:
 		if len(res.ResolvedNotes) > 0 {
 			out := make([]resourceDisplayItem, 0, len(res.ResolvedNotes))
-			for _, sn := range res.ResolvedNotes {
+			for i := range res.ResolvedNotes {
+				sn := res.ResolvedNotes[i]
 				out = append(out, resourceDisplayItem{
 					Item:         sn.Item,
 					SourceFolder: sn.Source,

@@ -46,7 +46,7 @@ type unlockResult struct {
 }
 
 // Run starts a localhost unlock web server, auto-opens the browser, and blocks
-// until unlock succeeds, times out, or ctx is cancelled.
+// until unlock succeeds, times out, or ctx is canceled.
 func Run(ctx context.Context, unlockFn UnlockFunc, opts Options) (string, error) {
 	if unlockFn == nil {
 		return "", fmt.Errorf("unlock function is nil")

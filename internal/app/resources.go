@@ -212,7 +212,8 @@ func listFolder(ctx context.Context, params ListParams, r Reporter) (ListResult,
 
 	merged := note.MergeNoteItems(chainNames, itemsByFolder)
 	r.Infof("\n  Notes (%d item(s)):\n", len(merged.Items))
-	for _, it := range merged.Items {
+	for i := range merged.Items {
+		it := merged.Items[i]
 		r.Infof("    [from: %s] %s\n", it.Source, it.Item.Name)
 	}
 	if len(merged.Conflicts) > 0 {
@@ -573,7 +574,8 @@ func GetNote(ctx context.Context, params GetParams, r Reporter) (GetResult, erro
 	}
 	notes := make([]bwtypes.Item, 0, len(merged.Items))
 	sourceByID := make(map[string]string, len(merged.Items))
-	for _, it := range merged.Items {
+	for i := range merged.Items {
+		it := merged.Items[i]
 		notes = append(notes, it.Item)
 		sourceByID[it.Item.ID] = it.Source
 	}
@@ -591,7 +593,8 @@ func GetNote(ctx context.Context, params GetParams, r Reporter) (GetResult, erro
 	}
 	r.Infof("Synced %d note(s) to %s\n", synced, cwd)
 	if len(chain) > 1 {
-		for _, it := range merged.Items {
+		for i := range merged.Items {
+			it := merged.Items[i]
 			source := sourceByID[it.Item.ID]
 			if source == "" {
 				source = folder

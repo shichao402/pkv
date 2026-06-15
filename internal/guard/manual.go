@@ -81,7 +81,8 @@ func (g *Guard) Download(ctx context.Context, opts TransferOptions) (TransferSum
 		if err != nil {
 			return summary, err
 		}
-		for _, entry := range entries {
+		for i := range entries {
+			entry := entries[i]
 			result := g.downloadOne(ctx, st, session, ws, entry)
 			summary.Results = append(summary.Results, result)
 			switch result.Action {
@@ -132,7 +133,8 @@ func (g *Guard) Upload(ctx context.Context, opts TransferOptions) (TransferSumma
 		if err != nil {
 			return summary, err
 		}
-		for _, entry := range entries {
+		for i := range entries {
+			entry := entries[i]
 			result := g.uploadOne(ctx, st, session, ws, entry)
 			summary.Results = append(summary.Results, result)
 			switch result.Action {
@@ -171,7 +173,9 @@ func (g *Guard) selectTrackedNotes(st *state.State, ws state.WorkspaceEntry, not
 	if noteRef == "" || strings.EqualFold(noteRef, "all") {
 		return st.FindSyncedNotes(ws.Folder, ws.TargetDir), nil
 	}
-	for _, entry := range st.FindSyncedNotes(ws.Folder, ws.TargetDir) {
+	synced := st.FindSyncedNotes(ws.Folder, ws.TargetDir)
+	for i := range synced {
+		entry := synced[i]
 		if entry.ItemID == noteRef || entry.FileName == noteRef {
 			return []state.NoteEntry{entry}, nil
 		}
@@ -187,9 +191,10 @@ func (g *Guard) downloadNewRemoteNotes(ctx context.Context, st *state.State, ses
 	if err != nil {
 		return 0, err
 	}
-	tracked := make(map[string]struct{})
-	for _, entry := range st.FindSyncedNotes(ws.Folder, ws.TargetDir) {
-		tracked[entry.ItemID] = struct{}{}
+	synced := st.FindSyncedNotes(ws.Folder, ws.TargetDir)
+	tracked := make(map[string]struct{}, len(synced))
+	for i := range synced {
+		tracked[synced[i].ItemID] = struct{}{}
 	}
 	var newNotes []types.Item
 	newSources := make(map[string]string)

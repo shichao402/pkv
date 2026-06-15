@@ -115,7 +115,8 @@ func runIncludePipeline(
 	if len(mergedNotes.Items) > 0 {
 		sourceByID := make(map[string]string, len(mergedNotes.Items))
 		syncItems := make([]types.Item, 0, len(mergedNotes.Items))
-		for _, sn := range mergedNotes.Items {
+		for i := range mergedNotes.Items {
+			sn := mergedNotes.Items[i]
 			syncItems = append(syncItems, sn.Item)
 			sourceByID[sn.Item.ID] = sn.Source
 		}

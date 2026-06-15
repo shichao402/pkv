@@ -16,7 +16,7 @@ import (
 type execCommandFunc func(name string, args ...string) *exec.Cmd
 type lookPathFunc func(file string) (string, error)
 
-var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-?]*[- /]*[@-~]`) //nolint:gocritic // ANSI CSI sequence; dash-first class avoids badRegexp range warning
 
 type Client struct {
 	execCommand execCommandFunc
@@ -385,7 +385,7 @@ func (c *Client) UnlockWithPassword(password string) (string, error) {
 	}
 	switch status.Status {
 	case "unauthenticated":
-		return "", fmt.Errorf("Bitwarden not logged in; run 'bw login' in a terminal first")
+		return "", fmt.Errorf("bitwarden not logged in; run 'bw login' in a terminal first")
 	case "locked", "unlocked":
 		session, err := c.unlockWithPassword(password)
 		if err != nil {
@@ -405,7 +405,7 @@ func (c *Client) unlockWithPassword(password string) (string, error) {
 	if err := os.Setenv(unlockPasswordEnvVar, password); err != nil {
 		return "", err
 	}
-	defer os.Unsetenv(unlockPasswordEnvVar)
+	defer func() { _ = os.Unsetenv(unlockPasswordEnvVar) }()
 
 	cmd := c.command("--raw", "unlock", "--passwordenv", unlockPasswordEnvVar)
 	out, err := cmd.Output()

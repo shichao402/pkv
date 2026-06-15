@@ -1025,14 +1025,6 @@ func (m *Model) currentDisplayItem() (resourceDisplayItem, bool) {
 	return items[idx], true
 }
 
-func (m *Model) currentItem() (bwtypes.Item, bool) {
-	display, ok := m.currentDisplayItem()
-	if !ok {
-		return bwtypes.Item{}, false
-	}
-	return display.Item, true
-}
-
 func (m *Model) clampSelection() {
 	m.selectedFolder = clamp(m.selectedFolder, len(m.folders))
 	m.selectedItem[m.tab] = clamp(m.selectedItem[m.tab], len(m.currentDisplayItems()))
@@ -1298,7 +1290,7 @@ func newAddNoteFileState() addNoteFileState {
 	return addNoteFileState{picker: picker}
 }
 
-func resolveSSHWizardKey(value string) (expandedPath, openSSHKey, publicKey, fingerprint string, generated bool, err error) {
+func resolveSSHWizardKey(value string) (expandedPath, openSSHKey, publicKey, fingerprint string, generated bool, err error) { //nolint:gocritic // wizard return bundle is intentionally flat for callers
 	privatePath := strings.TrimSpace(value)
 	if privatePath == "" {
 		openSSHKey, publicKey, fingerprint, err = pkvkey.GenerateKeypair(pkvkey.AlgoEd25519, 4096, defaultGeneratedKeyComment())

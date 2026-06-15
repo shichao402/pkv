@@ -40,7 +40,7 @@ func readYAMLString(path, key string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	prefix := key + ":"
 	scanner := bufio.NewScanner(f)

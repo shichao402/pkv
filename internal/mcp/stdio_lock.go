@@ -3,11 +3,9 @@ package mcp
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -39,7 +37,7 @@ func acquireStdioLock() (*os.File, error) {
 	return nil, fmt.Errorf("failed to acquire mcp lock")
 }
 
-func lockFilePath() (string, string, error) {
+func lockFilePath() (path, workspace string, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", "", err
@@ -54,18 +52,6 @@ func lockFilePath() (string, string, error) {
 		suffix = strings.ReplaceAll(ws, string(os.PathSeparator), "_")
 	}
 	return filepath.Join(dir, "mcp_"+suffix+".lock"), ws, nil
-}
-
-func tryAcquireLock(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	return f, nil
 }
 
 func writeLockOwner(f *os.File) error {
@@ -84,18 +70,16 @@ func terminateStaleLockHolder(path string) bool {
 	if pid <= 0 || pid == os.Getpid() {
 		return false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
+	if !signalStaleProcess(pid) {
 		return false
 	}
-	_ = proc.Signal(syscall.SIGTERM)
 	for range 5 {
 		if !processRunning(pid) {
 			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+	if !killStaleProcess(pid) {
 		return false
 	}
 	for range 5 {
@@ -121,34 +105,4 @@ func readLockPID(path string) int {
 		return 0
 	}
 	return pid
-}
-
-func findLockHolderPID(path string) int {
-	out, err := exec.Command("lsof", "-t", path).Output()
-	if err != nil {
-		return 0
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		pid, err := strconv.Atoi(strings.TrimSpace(line))
-		if err != nil || pid <= 0 || pid == os.Getpid() {
-			continue
-		}
-		return pid
-	}
-	return 0
-}
-
-func processRunning(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	return syscall.Kill(pid, 0) == nil
-}
-
-func releaseStdioLock(f *os.File) {
-	if f == nil {
-		return
-	}
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	_ = f.Close()
 }

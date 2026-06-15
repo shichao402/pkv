@@ -64,7 +64,7 @@ func (c *fakeAddFolderClient) ListFolders(string) ([]bwtypes.Folder, error) {
 	return c.folders, nil
 }
 
-func (c *fakeAddFolderClient) CreateFolder(_ string, name string) (bwtypes.Folder, error) {
+func (c *fakeAddFolderClient) CreateFolder(_, name string) (bwtypes.Folder, error) {
 	c.calls = append(c.calls, "create:"+name)
 	if c.createdFolder.Name == "" {
 		c.createdFolder.Name = name

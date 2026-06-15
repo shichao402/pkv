@@ -41,14 +41,14 @@ type Folder struct {
 }
 
 type Item struct {
-	ID             string        `json:"id"`
-	FolderID       string        `json:"folderId"`
-	Type           int           `json:"type"`
-	Name           string        `json:"name"`
-	Notes          string        `json:"notes"`
-	RevisionDate   string        `json:"revisionDate"`
-	Fields         []CustomField `json:"fields"`
-	SSHKey         *SSHKeyData   `json:"sshKey,omitempty"`
+	ID           string        `json:"id"`
+	FolderID     string        `json:"folderId"`
+	Type         int           `json:"type"`
+	Name         string        `json:"name"`
+	Notes        string        `json:"notes"`
+	RevisionDate string        `json:"revisionDate"`
+	Fields       []CustomField `json:"fields"`
+	SSHKey       *SSHKeyData   `json:"sshKey,omitempty"`
 }
 
 type CustomField struct {

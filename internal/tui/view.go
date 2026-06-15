@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-
-	bwtypes "github.com/shichao402/pkv/internal/bw/types"
 )
 
 var (
@@ -96,7 +94,7 @@ func renderPaneTitle(title string, active bool) string {
 	return subtleStyle.Render("○ " + title)
 }
 
-func renderSelectableLine(value string, selected bool, active bool) string {
+func renderSelectableLine(value string, selected, active bool) string {
 	if !selected {
 		return "  " + value
 	}
@@ -181,7 +179,8 @@ func renderResources(m Model) string {
 	}
 
 	selected := m.selectedItem[m.tab]
-	for i, item := range items {
+	for i := range items {
+		item := items[i]
 		b.WriteString(renderSelectableLine(formatResourceLine(item), i == selected, active))
 		b.WriteString("\n")
 	}
@@ -495,14 +494,6 @@ func localMaterializedScope(kind string) string {
 	default:
 		return "local materialized files"
 	}
-}
-
-func renderResourceLine(item bwtypes.Item) string {
-	name := item.Name
-	if name == "" {
-		name = "(unnamed)"
-	}
-	return fmt.Sprintf("%s  %s", shortID(item.ID), name)
 }
 
 func tabName(tab resourceTab) string {
