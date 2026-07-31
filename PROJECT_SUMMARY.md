@@ -27,6 +27,7 @@ pkv remove <folder> <ssh|env|note> [id...]
 pkv clean <folder> <ssh|env|note>
 pkv unlock
 pkv update
+pkv uninstall
 ```
 
 ## TUI 能力

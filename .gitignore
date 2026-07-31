@@ -29,3 +29,5 @@ secrets.*
 # Temporary
 .pnpm-debug.log
 coverage.out
+__pycache__/
+*.py[cod]

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.12] - 2026-07-31
+
+### Added
+- 新增 `pkv uninstall`：委托嵌入的跨平台 Python 3 脚本（仅标准库）彻底清理本机 PKV
+- 清理范围覆盖二进制、`~/.pkv/`、SSH `pkv_*` 与 PKV 管理区块、state 追踪的 note、Windows 用户 PATH、遗留 shell rc 引用，以及常见 MCP 配置中的 `dec-pkv-mcp`
+- Windows 上等待调用进程退出后再删除自身 `.exe`；必要时回退到 reboot 延迟删除
+- 仓库根目录提供可独立执行的 `uninstall.py`，与安装脚本同级
+
+### Changed
+- README / PROJECT_SUMMARY 补充卸载说明与命令列表
+
 ## [v1.0.0] - 2026-05-12
 
 ### Added

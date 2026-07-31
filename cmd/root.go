@@ -30,7 +30,9 @@ Common commands:
   pkv remove <folder> env
   pkv remove <folder> note <id> [id2]...
   pkv clean <folder> ssh|env|note
-  pkv unlock`,
+  pkv unlock
+  pkv update
+  pkv uninstall`,
 	Version:      version.Version,
 	SilenceUsage: true,
 }

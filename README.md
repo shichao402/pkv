@@ -69,9 +69,33 @@ pkv remove <folder> <ssh|env|note> [id...]
 pkv clean <folder> <ssh|env|note>
 pkv unlock
 pkv update
+pkv uninstall
 ```
 
 交互式终端默认进入 TUI（`pkv`）；脚本 / CI 使用 `PKV_NO_TUI=1 pkv ...`。
+
+### 卸载
+
+彻底清理本机 PKV 安装与本地产物（**不会**删除 Bitwarden 远端数据）：
+
+```bash
+pkv uninstall
+# 或跳过确认
+pkv uninstall -y
+```
+
+也可直接运行仓库里的跨平台脚本（仅 Python 3 标准库，无第三方依赖）：
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/shichao402/pkv/ReleaseLatest/uninstall.py | python3 - --yes
+
+# Windows（已安装 Python 3）
+irm https://raw.githubusercontent.com/shichao402/pkv/ReleaseLatest/uninstall.py -OutFile uninstall.py
+python uninstall.py --yes
+```
+
+会清理：二进制、`~/.pkv/`、SSH 的 `pkv_*` 与 PKV 管理区块、state 追踪到的本地 note、Windows 用户 PATH 中的安装目录，以及常见 MCP 配置里的 `dec-pkv-mcp` 条目。Windows 上会先退出进程再删除自身 `.exe`。需要本机有可用的 `python3` / `python`。
 
 ### Bitwarden 数据约定（遗留）
 
@@ -83,6 +107,7 @@ pkv update
 
 - Bitwarden CLI：`bw`（`brew install bitwarden-cli` 等）
 - Go 1.21+（仅源码构建）
+- Python 3（仅 `pkv uninstall` / 独立 `uninstall.py` 需要；标准库即可）
 
 ### 从源码构建
 
