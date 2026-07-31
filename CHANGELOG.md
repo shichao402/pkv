@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.13] - 2026-07-31
+
+### Fixed
+- `pkv uninstall` 在 Windows 上静默失败、什么都没清理：分离进程（`DETACHED_PROCESS`）无法使用继承来的控制台句柄，助手脚本第一次 `print` 就抛 `OSError` 并直接退出。现在 Windows 上助手输出重定向到日志文件，命令会打印日志路径
+- `uninstall.py` 的所有输出改为永不抛异常，并新增 `--log`；顶层异常会连同 traceback 写入日志，不再无声失败
+- 助手会清理历史遗留的 `pkv-uninstall-*.py` 临时脚本
+
+### Changed
+- macOS / Linux 改为前台同步执行助手并实时输出（Unix 可以删除正在运行的二进制，无需先退出）；仅 Windows 保留“先退出再删除自身”的分离流程
+- 新增 `--ignore-pid`，前台执行时不会再空等调用它的 pkv 进程
+
+### Added
+- `scripts/test_uninstall_sandbox.py`：在临时沙箱 HOME 中端到端验证卸载逻辑，不触碰真实环境
+
 ## [v1.0.12] - 2026-07-31
 
 ### Added

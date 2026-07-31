@@ -5,7 +5,10 @@
 Can be invoked by `pkv uninstall` (embedded) or standalone:
 
   python3 uninstall.py --yes
-  python3 uninstall.py --exe /path/to/pkv --pid 12345 --yes
+  python3 uninstall.py --exe /path/to/pkv --pid 12345 --yes --log /tmp/pkv-uninstall.log
+
+Output is best-effort: when the process has no usable stdout (for example a
+detached Windows process), messages still land in the --log file.
 """
 
 from __future__ import print_function
@@ -17,6 +20,7 @@ import os
 import shutil
 import sys
 import time
+import traceback
 
 IS_WIN = sys.platform == "win32"
 
@@ -31,17 +35,61 @@ LEGACY_RC_NEEDLES = (
 )
 MCP_SERVER_NAME = "dec-pkv-mcp"
 
+_log_fh = None
+
+
+def open_log(path):
+    global _log_fh
+    if not path:
+        return
+    try:
+        _log_fh = open(path, "a", encoding="utf-8")
+    except Exception:
+        _log_fh = None
+
+
+def close_log():
+    global _log_fh
+    if _log_fh is not None:
+        try:
+            _log_fh.close()
+        except Exception:
+            pass
+        _log_fh = None
+
+
+def emit(level, msg, stream=None):
+    """Write a message to the log file and stdout/stderr, never raising.
+
+    A detached Windows process inherits console handles it cannot use, so any
+    write here may fail. Losing output must never abort the uninstall.
+    """
+    line = "[%s] %s" % (level, msg)
+    if _log_fh is not None:
+        try:
+            _log_fh.write(line + "\n")
+            _log_fh.flush()
+        except Exception:
+            pass
+    try:
+        target = stream or sys.stdout
+        if target is not None:
+            print(line, file=target)
+            target.flush()
+    except Exception:
+        pass
+
 
 def info(msg):
-    print("[INFO] " + msg)
+    emit("INFO", msg)
 
 
 def warn(msg):
-    print("[WARN] " + msg)
+    emit("WARN", msg)
 
 
 def error(msg):
-    print("[ERROR] " + msg, file=sys.stderr)
+    emit("ERROR", msg, stream=sys.stderr)
 
 
 def home_dir():
@@ -65,8 +113,25 @@ def default_binary_path():
     return os.path.join(default_install_dir(), "pkv")
 
 
+def run_capture(argv):
+    """Run a helper command and return stdout, or None on any failure."""
+    import subprocess
+
+    kwargs = {
+        "stdin": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "universal_newlines": True,
+    }
+    if IS_WIN and hasattr(subprocess, "CREATE_NO_WINDOW"):
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        return subprocess.check_output(argv, **kwargs)
+    except Exception:
+        return None
+
+
 def pid_alive(pid):
-    if pid is None or pid <= 0:
+    if not pid or pid <= 0:
         return False
     if IS_WIN:
         import ctypes
@@ -85,7 +150,7 @@ def pid_alive(pid):
 
 
 def wait_for_pid(pid, timeout=60.0, interval=0.25):
-    if pid is None or pid <= 0:
+    if not pid or pid <= 0:
         return True
     deadline = time.time() + timeout
     while pid_alive(pid):
@@ -104,57 +169,42 @@ def list_pkv_pids(exclude=None):
     found = set()
 
     if IS_WIN:
-        try:
-            import subprocess
-
-            out = subprocess.check_output(
-                ["tasklist", "/FI", "IMAGENAME eq pkv.exe", "/FO", "CSV", "/NH"],
-                stderr=subprocess.DEVNULL,
-                universal_newlines=True,
-            )
+        out = run_capture(["tasklist", "/FI", "IMAGENAME eq pkv.exe", "/FO", "CSV", "/NH"])
+        if out is None:
+            warn("could not enumerate pkv.exe processes")
+        else:
             for line in out.splitlines():
-                line = line.strip().strip('"')
+                line = line.strip()
                 if not line or line.lower().startswith("info:"):
                     continue
                 parts = [p.strip().strip('"') for p in line.split(",")]
-                if len(parts) >= 2 and parts[0].lower() == "pkv.exe":
+                if len(parts) >= 2 and parts[0].strip('"').lower() == "pkv.exe":
                     try:
                         found.add(int(parts[1]))
                     except ValueError:
                         pass
-        except Exception as exc:
-            warn("could not enumerate pkv.exe processes: %s" % exc)
     else:
-        # Prefer pgrep; fall back to scanning /proc.
-        try:
-            import subprocess
-
-            out = subprocess.check_output(
-                ["pgrep", "-x", "pkv"],
-                stderr=subprocess.DEVNULL,
-                universal_newlines=True,
-            )
+        out = run_capture(["pgrep", "-x", "pkv"])
+        if out is not None:
             for line in out.splitlines():
                 line = line.strip()
                 if line.isdigit():
                     found.add(int(line))
-        except Exception:
+        else:
             proc_root = "/proc"
             if os.path.isdir(proc_root):
                 for name in os.listdir(proc_root):
                     if not name.isdigit():
                         continue
-                    pid = int(name)
-                    cmdline_path = os.path.join(proc_root, name, "cmdline")
                     try:
-                        with open(cmdline_path, "rb") as fh:
+                        with open(os.path.join(proc_root, name, "cmdline"), "rb") as fh:
                             raw = fh.read().replace(b"\x00", b" ")
                         text = raw.decode("utf-8", "replace")
                     except Exception:
                         continue
-                    base = os.path.basename(text.split(" ", 1)[0])
-                    if base == "pkv" or "/pkv" in text.split(" ", 1)[0]:
-                        found.add(pid)
+                    argv0 = text.split(" ", 1)[0]
+                    if os.path.basename(argv0) == "pkv":
+                        found.add(int(name))
 
     return sorted(pid for pid in found if pid not in exclude)
 
@@ -168,7 +218,8 @@ def wait_for_other_pkv(exclude, timeout=30.0):
         if time.time() >= deadline:
             warn("other pkv process(es) still running: %s" % leftovers)
             return False
-        time.sleep(0.5)
+        info("waiting for other pkv process(es) to exit: %s" % leftovers)
+        time.sleep(1.0)
 
 
 def safe_remove(path):
@@ -325,10 +376,9 @@ def clean_shell_rc_files():
             continue
 
         def transform(content, _needles=LEGACY_RC_NEEDLES):
-            lines = content.splitlines(True)
             kept = []
             changed = False
-            for line in lines:
+            for line in content.splitlines(True):
                 if any(needle in line for needle in _needles):
                     changed = True
                     continue
@@ -361,8 +411,8 @@ def clean_windows_path(install_dir):
         return
     install_dir = os.path.normpath(install_dir)
     try:
-        import winreg
         import ctypes
+        import winreg
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_ALL_ACCESS) as key:
             try:
@@ -379,21 +429,14 @@ def clean_windows_path(install_dir):
                 kept.append(part)
             if not removed:
                 return
-            new_value = ";".join(kept)
-            winreg.SetValueEx(key, "Path", 0, reg_type, new_value)
+            winreg.SetValueEx(key, "Path", 0, reg_type, ";".join(kept))
             info("removed %s from user PATH" % install_dir)
 
         HWND_BROADCAST = 0xFFFF
         WM_SETTINGCHANGE = 0x001A
         SMTO_ABORTIFHUNG = 0x0002
         ctypes.windll.user32.SendMessageTimeoutW(
-            HWND_BROADCAST,
-            WM_SETTINGCHANGE,
-            0,
-            "Environment",
-            SMTO_ABORTIFHUNG,
-            5000,
-            None,
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", SMTO_ABORTIFHUNG, 5000, None
         )
     except Exception as exc:
         warn("failed to clean user PATH: %s" % exc)
@@ -409,7 +452,7 @@ def remove_json_mcp_server(path):
         warn("failed to parse MCP config %s: %s" % (path, exc))
         return False
 
-    servers = data.get("mcpServers")
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
     if not isinstance(servers, dict) or MCP_SERVER_NAME not in servers:
         return False
     del servers[MCP_SERVER_NAME]
@@ -430,14 +473,13 @@ def clean_mcp_configs_under(root):
     for rel in (
         os.path.join(".cursor", "mcp.json"),
         os.path.join(".claude", "mcp.json"),
-        os.path.join(".mcp.json"),
+        ".mcp.json",
         "mcp.json",
     ):
         remove_json_mcp_server(os.path.join(root, rel))
 
 
 def clean_user_mcp_configs():
-    # Common user-level MCP config locations.
     candidates = [
         os.path.join(home_dir(), ".cursor", "mcp.json"),
         os.path.join(home_dir(), ".claude", "mcp.json"),
@@ -455,21 +497,24 @@ def remove_binary(exe_path):
     if not exe_path:
         return
     exe_path = os.path.abspath(exe_path)
-    # Update leftovers.
     safe_remove(exe_path + ".bak")
-    for _ in range(10):
+
+    for attempt in range(20):
         if safe_remove(exe_path):
             break
+        if not os.path.lexists(exe_path):
+            break
+        if attempt == 0:
+            info("binary still locked, retrying: %s" % exe_path)
         time.sleep(0.5)
     else:
         if os.path.lexists(exe_path):
-            warn("could not delete binary yet (still locked?): %s" % exe_path)
+            warn("could not delete binary (still locked): %s" % exe_path)
             if IS_WIN:
                 schedule_windows_delete_on_reboot(exe_path)
 
     parent = os.path.dirname(exe_path)
-    install_dir = os.path.abspath(default_install_dir())
-    if IS_WIN and os.path.abspath(parent) == install_dir:
+    if IS_WIN and os.path.abspath(parent) == os.path.abspath(default_install_dir()):
         try:
             if os.path.isdir(parent) and not os.listdir(parent):
                 os.rmdir(parent)
@@ -483,8 +528,7 @@ def schedule_windows_delete_on_reboot(path):
         import ctypes
 
         MOVEFILE_DELAY_UNTIL_REBOOT = 0x4
-        ok = ctypes.windll.kernel32.MoveFileExW(str(path), None, MOVEFILE_DELAY_UNTIL_REBOOT)
-        if ok:
+        if ctypes.windll.kernel32.MoveFileExW(str(path), None, MOVEFILE_DELAY_UNTIL_REBOOT):
             warn("scheduled delete-on-reboot for %s" % path)
         else:
             warn("MoveFileExW failed for %s" % path)
@@ -492,18 +536,26 @@ def schedule_windows_delete_on_reboot(path):
         warn("failed to schedule reboot deletion for %s: %s" % (path, exc))
 
 
+def clean_stale_helper_files(current_script):
+    """Remove helper scripts left behind by earlier uninstall attempts."""
+    current = os.path.abspath(current_script) if current_script else ""
+    tmp_dir = os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp"
+    for path in glob.glob(os.path.join(tmp_dir, "pkv-uninstall-*.py")):
+        if os.path.abspath(path) == current:
+            continue
+        try:
+            os.remove(path)
+            info("removed stale helper script %s" % path)
+        except Exception:
+            pass
+
+
 def self_delete_script(script_path):
     if not script_path:
         return
     script_path = os.path.abspath(script_path)
-    # Only auto-delete temp helper copies, not the repo/source checkout.
-    tmp_markers = (os.sep + "tmp", os.sep + "temp", os.sep + "Temp")
-    lower = script_path.lower()
-    if not any(marker.lower() in lower for marker in tmp_markers):
-        if "pkv-uninstall-" not in os.path.basename(script_path):
-            return
-    # On Windows, rename then delete after a short delay via a tiny batch is
-    # unnecessary if we just try remove at exit; Python file may still be open.
+    if "pkv-uninstall-" not in os.path.basename(script_path):
+        return
     try:
         os.remove(script_path)
     except Exception:
@@ -514,7 +566,6 @@ def self_delete_script(script_path):
 def resolve_exe(explicit):
     if explicit:
         return os.path.abspath(explicit)
-    # Prefer PATH lookup.
     from shutil import which
 
     found = which("pkv") or which("pkv.exe")
@@ -541,13 +592,16 @@ def confirm_or_exit(assume_yes):
 def run(args):
     confirm_or_exit(args.yes)
 
-    parent_pid = args.pid
+    info("PKV uninstall started (pid=%d, platform=%s)" % (os.getpid(), sys.platform))
+
     exclude = {os.getpid()}
-    if parent_pid:
-        exclude.add(int(parent_pid))
-        info("waiting for caller process pid=%s to exit..." % parent_pid)
-        if not wait_for_pid(int(parent_pid), timeout=args.wait_timeout):
-            warn("timed out waiting for pid %s; continuing anyway" % parent_pid)
+    exclude.update(int(pid) for pid in (args.ignore_pid or []))
+
+    if args.pid:
+        exclude.add(int(args.pid))
+        info("waiting for caller process pid=%s to exit..." % args.pid)
+        if not wait_for_pid(int(args.pid), timeout=args.wait_timeout):
+            warn("timed out waiting for pid %s; continuing anyway" % args.pid)
 
     if not wait_for_other_pkv(exclude=exclude, timeout=min(30.0, args.wait_timeout)):
         warn("continuing uninstall while other pkv processes may still be active")
@@ -566,14 +620,12 @@ def run(args):
     clean_user_mcp_configs()
 
     exe_path = resolve_exe(args.exe)
-    install_dir = default_install_dir()
-    if exe_path:
-        install_dir = os.path.dirname(exe_path)
+    install_dir = os.path.dirname(exe_path) if exe_path else default_install_dir()
 
     if IS_WIN:
         clean_windows_path(install_dir)
 
-    info("removing ~/.pkv ...")
+    info("removing %s ..." % pkv_home())
     safe_remove(pkv_home())
 
     if exe_path and os.path.lexists(exe_path):
@@ -582,10 +634,13 @@ def run(args):
     else:
         warn("pkv binary not found; skipped binary deletion")
 
+    clean_stale_helper_files(args.script or __file__)
+
     info("PKV uninstall finished.")
     if IS_WIN:
         info("Open a new terminal so PATH changes take effect.")
 
+    close_log()
     self_delete_script(args.script or __file__)
     return 0
 
@@ -596,26 +651,36 @@ def build_parser():
     parser.add_argument("--exe", help="Absolute path to the pkv binary to delete")
     parser.add_argument("--pid", type=int, default=0, help="Caller PID to wait for before deleting binary")
     parser.add_argument(
+        "--ignore-pid",
+        type=int,
+        action="append",
+        default=[],
+        help="PID to ignore when waiting for running pkv processes (repeatable)",
+    )
+    parser.add_argument(
         "--wait-timeout",
         type=float,
         default=60.0,
         help="Seconds to wait for processes before continuing",
     )
-    parser.add_argument(
-        "--script",
-        help="Path of this helper script (used for temp self-cleanup)",
-    )
+    parser.add_argument("--log", help="Append progress to this log file")
+    parser.add_argument("--script", help="Path of this helper script (used for temp self-cleanup)")
     return parser
 
 
 def main(argv=None):
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
+    open_log(args.log)
     try:
         return run(args)
     except KeyboardInterrupt:
         error("interrupted")
         return 130
+    except Exception:
+        error("uninstall failed:\n" + traceback.format_exc())
+        return 1
+    finally:
+        close_log()
 
 
 if __name__ == "__main__":

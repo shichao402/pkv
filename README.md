@@ -95,7 +95,12 @@ irm https://raw.githubusercontent.com/shichao402/pkv/ReleaseLatest/uninstall.py 
 python uninstall.py --yes
 ```
 
-会清理：二进制、`~/.pkv/`、SSH 的 `pkv_*` 与 PKV 管理区块、state 追踪到的本地 note、Windows 用户 PATH 中的安装目录，以及常见 MCP 配置里的 `dec-pkv-mcp` 条目。Windows 上会先退出进程再删除自身 `.exe`。需要本机有可用的 `python3` / `python`。
+会清理：二进制、`~/.pkv/`、SSH 的 `pkv_*` 与 PKV 管理区块、state 追踪到的本地 note、Windows 用户 PATH 中的安装目录，以及常见 MCP 配置里的 `dec-pkv-mcp` 条目。需要本机有可用的 `python3` / `python`。
+
+平台行为差异：
+
+- **macOS / Linux**：助手在前台执行，进度直接输出到终端
+- **Windows**：`pkv.exe` 运行时无法删除自身，所以助手会分离启动、等待当前进程退出后再删除。此时终端里看不到进度，命令会打印一个日志路径（`%TEMP%\pkv-uninstall-<ts>.log`），清理结果都在里面；如果文件仍被占用，会退化为重启后删除
 
 ### Bitwarden 数据约定（遗留）
 

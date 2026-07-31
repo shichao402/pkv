@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -30,6 +31,10 @@ macOS, and Linux share one implementation. The script removes:
   - Windows user PATH entry for the install directory
   - legacy shell rc sourcing lines and optional MCP server entries
 
+On Windows the helper runs detached and writes to a log file, because the
+running pkv.exe must exit before it can be deleted. Elsewhere the helper runs
+in the foreground and streams its progress.
+
 Requires a working python3 / python interpreter on PATH.
 Does not delete anything from Bitwarden.`,
 	RunE: runUninstall,
@@ -47,8 +52,7 @@ func runUninstall(cmd *cobra.Command, _ []string) error {
 		if _, err := fmt.Fscanln(cmd.InOrStdin(), &reply); err != nil {
 			reply = ""
 		}
-		reply = strings.TrimSpace(strings.ToLower(reply))
-		if reply != "y" && reply != "yes" {
+		if r := strings.TrimSpace(strings.ToLower(reply)); r != "y" && r != "yes" {
 			fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
 			return nil
 		}
@@ -76,31 +80,66 @@ func runUninstall(cmd *cobra.Command, _ []string) error {
 	args := append(append([]string{}, pythonArgs...), scriptPath,
 		"--yes",
 		"--exe", exePath,
-		"--pid", fmt.Sprintf("%d", os.Getpid()),
 		"--script", scriptPath,
 	)
+
+	if runtime.GOOS == "windows" {
+		return startDetachedUninstall(cmd, python, args, scriptPath)
+	}
+	return runForegroundUninstall(cmd, python, args, scriptPath)
+}
+
+// runForegroundUninstall streams helper output. Unix can unlink the running
+// binary, so there is no need to exit first.
+func runForegroundUninstall(cmd *cobra.Command, python string, args []string, scriptPath string) error {
+	args = append(args, "--ignore-pid", fmt.Sprintf("%d", os.Getpid()))
 
 	proc := exec.Command(python, args...)
 	proc.Stdout = cmd.OutOrStdout()
 	proc.Stderr = cmd.ErrOrStderr()
-	proc.Stdin = nil
+
+	if err := proc.Run(); err != nil {
+		return fmt.Errorf("uninstall helper failed: %w", err)
+	}
+	return nil
+}
+
+// startDetachedUninstall spawns the helper without a console and exits, so the
+// helper can delete this .exe once the process is gone. A detached process
+// cannot use the inherited console handles, so its output goes to a log file.
+func startDetachedUninstall(cmd *cobra.Command, python string, args []string, scriptPath string) error {
+	logPath := filepath.Join(os.TempDir(), fmt.Sprintf("pkv-uninstall-%d.log", time.Now().Unix()))
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		_ = os.Remove(scriptPath)
+		return fmt.Errorf("create uninstall log: %w", err)
+	}
+	defer func() { _ = logFile.Close() }()
+
+	args = append(args, "--pid", fmt.Sprintf("%d", os.Getpid()), "--log", logPath)
+
+	proc := exec.Command(python, args...)
+	proc.Stdout = logFile
+	proc.Stderr = logFile
 	detachUninstallProcess(proc)
 
-	fmt.Fprintln(cmd.OutOrStdout(), "Starting uninstall helper...")
 	if err := proc.Start(); err != nil {
 		_ = os.Remove(scriptPath)
 		return fmt.Errorf("start uninstall helper: %w", err)
 	}
 
-	// Exit immediately so Windows can unlock the running .exe for deletion.
-	// The helper waits for this PID, then finishes cleanup.
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "Uninstall helper started in the background.")
+	fmt.Fprintf(out, "It waits for this process (pid %d) to exit, then removes pkv.exe.\n", os.Getpid())
+	fmt.Fprintf(out, "Progress log: %s\n", logPath)
+
+	// Exit now so Windows unlocks the running binary for deletion.
 	os.Exit(0)
 	return nil
 }
 
 func writeTempUninstallScript() (string, error) {
-	dir := os.TempDir()
-	f, err := os.CreateTemp(dir, "pkv-uninstall-*.py")
+	f, err := os.CreateTemp(os.TempDir(), "pkv-uninstall-*.py")
 	if err != nil {
 		return "", fmt.Errorf("create temp uninstall script: %w", err)
 	}
@@ -118,18 +157,14 @@ func writeTempUninstallScript() (string, error) {
 }
 
 func findPython() (string, []string, error) {
-	candidates := []struct {
+	type candidate struct {
 		bin  string
 		args []string
-	}{
-		{"python3", nil},
-		{"python", nil},
 	}
+
+	candidates := []candidate{{"python3", nil}, {"python", nil}}
 	if runtime.GOOS == "windows" {
-		candidates = append(candidates, struct {
-			bin  string
-			args []string
-		}{"py", []string{"-3"}})
+		candidates = append(candidates, candidate{"py", []string{"-3"}})
 	}
 
 	var tried []string
@@ -140,15 +175,14 @@ func findPython() (string, []string, error) {
 			continue
 		}
 		args := append([]string{}, c.args...)
-		checkArgs := append(append([]string{}, args...), "--version")
-		out, err := exec.Command(path, checkArgs...).CombinedOutput()
-		versionLine := strings.TrimSpace(string(out))
-		if err != nil || !strings.Contains(strings.ToLower(versionLine), "python") {
+		out, err := exec.Command(path, append(append([]string{}, args...), "--version")...).CombinedOutput()
+		versionLine := strings.ToLower(strings.TrimSpace(string(out)))
+		if err != nil || !strings.Contains(versionLine, "python") {
 			tried = append(tried, c.bin)
 			continue
 		}
-		// Avoid the Windows Store python stub that prints an install hint and exits 0/9009 oddly.
-		if runtime.GOOS == "windows" && strings.Contains(strings.ToLower(versionLine), "microsoft store") {
+		// The Windows Store stub answers `--version` without being a real interpreter.
+		if strings.Contains(versionLine, "microsoft store") {
 			tried = append(tried, c.bin+" (store stub)")
 			continue
 		}
